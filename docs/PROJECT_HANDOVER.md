@@ -63,7 +63,7 @@ client-brain/client-memory-schema.json    brain schema
 src/code/*.js                             source of every Code node
 src/shared/intake_options.json            platforms, goals, photo options for the intake form
 tools/build_workflow.py                   rebuilds the workflow JSON
-tests/run_tests.mjs                       71 checks on the Code nodes (mocked n8n)
+tests/run_tests.mjs                       74 checks on the Code nodes (mocked n8n)
 archive/                                  old direct workflow (do not import)
 start-n8n.bat / .ps1                      launch n8n with .env and the flags the workflow needs
 .env.example                              copy to .env and fill in keys
@@ -88,6 +88,8 @@ Harmless n8n console messages: `getaddrinfo ENOTFOUND telemetry.n8n.io`, `403 In
 - v4 adds **test mode** (`TEST_MODE=true` in `.env`) so the rest of the flow can be tested for free. Next: re-import the v4 workflow, add `TEST_MODE=true`, restart n8n, run the full flow (form, draft card, Approve, Edit, Discard).
 - The tunnel URL changes every time cloudflared restarts. Then update both Slack URLs (Event Subscriptions must show Verified again).
 
+- v5 fix: in test mode the intake checklist posted, but the "Answer 6 quick questions" button got **401** with reason `body could not be parsed`. n8n hands Slack's form posts (buttons, modals) over in a different shape than JSON events. `verify_signature.js` now tries every body shape and rebuilds the form encoding by hand (n8n's Code sandbox has no URLSearchParams, which was the real cause; v6) for the HMAC check (a forged signature is still rejected). The output also shows a `debug` field (raw length, content type) for diagnosis.
+
 ## 9. Known risks and limits
 - Untested against live services. Most likely to need a tweak: the 3-call Slack file upload, and Slack modal payloads.
 - OpenAI and Ideogram APIs need paid credit. Test mode (v4) covers this: 4 IF nodes `Test Mode? (...)` route around the 4 paid calls to `Mock ...` Code nodes that return the same response shapes. Placeholder images come from placehold.co (needs internet). Captions and the ack are marked TEST MODE so nobody mistakes them for real output.
@@ -105,4 +107,4 @@ Harmless n8n console messages: `getaddrinfo ENOTFOUND telemetry.n8n.io`, `403 In
 6. Selling: start with a small monthly 10-post pack priced in PKR for local brands, raise price after the first clients. Do not copy the README's $1,499+ retainer.
 
 ## 11. Prompt to paste into the next chat
-> I am continuing the "Slack AI Design Agency (n8n)" project. Read the attached PROJECT_HANDOVER.md first. The workflow is built (intake gate, real Vision QA, working buttons, multi-client brain, 71 passing code tests, test mode) and live-tested up to the Slack ack on my new laptop. My folder is C:\Users\LENOVO\Downloads\ai-design-agency-n8n-v3\ai-design-agency-n8n on Windows with n8n on localhost:5678. Next I want to: [live test / test mode / fashion photo mode / demo video / Google Sheets log]. Explain step by step in simple language.
+> I am continuing the "Slack AI Design Agency (n8n)" project. Read the attached PROJECT_HANDOVER.md first. The workflow is built (intake gate, real Vision QA, working buttons, multi-client brain, 74 passing code tests, test mode) and live-tested up to the Slack ack on my new laptop. My folder is C:\Users\LENOVO\Downloads\ai-design-agency-n8n-v3\ai-design-agency-n8n on Windows with n8n on localhost:5678. Next I want to: [live test / test mode / fashion photo mode / demo video / Google Sheets log]. Explain step by step in simple language.

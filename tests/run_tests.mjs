@@ -25,9 +25,10 @@ function run(name, inputJson, { binary } = {}) {
     if (!out) throw new Error(`node "${n}" has not run yet (referenced from "${name}")`);
     return { last: () => out[out.length - 1], first: () => out[0], all: () => out };
   };
-  const fn = new AsyncFunction('$input', '$', '$env', '$getWorkflowStaticData', 'require', node.parameters.jsCode);
+  // n8n's task-runner sandbox has no URLSearchParams / URL: hide them so the tests catch that.
+  const fn = new AsyncFunction('$input', '$', '$env', '$getWorkflowStaticData', 'require', 'URLSearchParams', 'URL', node.parameters.jsCode);
   const ctx = { helpers: { getBinaryDataBuffer: async () => binaryBuffer } };
-  return fn.call(ctx, $input, $, env, () => staticData, require).then((res) => {
+  return fn.call(ctx, $input, $, env, () => staticData, require, undefined, undefined).then((res) => {
     outputs[name] = res;
     return res;
   });
@@ -200,6 +201,23 @@ const tsC = String(Math.floor(Date.now() / 1000));
 binaryBuffer = Buffer.from(rawClick);
 r = await run('Verify Slack Signature (Interactivity)', { headers: { 'x-slack-request-timestamp': tsC, 'x-slack-signature': sign(rawClick, tsC) } });
 ok(j(r).valid && j(r).payload.type === 'block_actions', 'interactivity payload verified and parsed');
+{
+  // n8n may not keep the raw form body: payload only in json.body, or raw already decoded
+  const payloadObj = JSON.parse(new URLSearchParams(rawClick).get('payload'));
+  const pText = JSON.stringify(payloadObj);
+  const formStd = new URLSearchParams({ payload: pText }).toString();
+  const h = { 'x-slack-request-timestamp': tsC, 'x-slack-signature': sign(formStd, tsC) };
+  binaryBuffer = Buffer.from('');
+  const a = await run('Verify Slack Signature (Interactivity)', { headers: h, body: { payload: pText } });
+  ok(j(a).valid && j(a).payload.type === 'block_actions', 'form body without raw copy: parsed and signature rebuilt');
+  binaryBuffer = Buffer.from('payload=' + pText);
+  const b = await run('Verify Slack Signature (Interactivity)', { headers: h, body: {} });
+  ok(j(b).valid && j(b).payload.actions[0].action_id === 'btn_request_edit', 'already-decoded raw body: parsed and signature rebuilt');
+  const c = await run('Verify Slack Signature (Interactivity)', { headers: { ...h, 'x-slack-signature': 'v0=forged' }, body: { payload: pText } });
+  ok(j(c).valid === false && j(c).reason === 'signature mismatch', 'forged button click still rejected');
+  binaryBuffer = Buffer.from(rawClick);
+  await run('Verify Slack Signature (Interactivity)', { headers: { 'x-slack-request-timestamp': tsC, 'x-slack-signature': sign(rawClick, tsC) } });
+}
 r = await run('Route Action', j(r));
 ok(j(r).route === 'edit_open' && j(r).job_id === ctx.job_id, 'Request Edit routed');
 r = await run('Build Edit Modal', j(r));
