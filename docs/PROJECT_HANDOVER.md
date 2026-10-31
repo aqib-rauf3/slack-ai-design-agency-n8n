@@ -1,12 +1,12 @@
 # Project Handover: Slack AI Design Agency (n8n)
 
-Written 2026-10-31. Purpose: let a new chat (or a new person) continue this project without re-explaining anything. Paste or attach this file at the start of the next chat.
+Written 2026-10-31, updated the same day after the first live run (v4: test mode). Purpose: let a new chat (or a new person) continue this project without re-explaining anything. Paste or attach this file at the start of the next chat.
 
 ## 1. Who and why
 - Owner: Muhammad Aqib Rauf (BS CS student, AI automation intern and freelancer in Pakistan).
 - Goal: turn this n8n project into a sellable freelance service (AI-made social media content for brands), with a Maria B style fashion brand as the study and portfolio example.
 - Working style that suits the owner: step-by-step, simple language, Roman Urdu or Hinglish explanations are fine, practical next steps, honest warnings when something is a bad idea.
-- Environment: Windows PC, project folder `D:\Mota bhai projects\Maria B agent`, opened in Antigravity IDE, n8n running locally at `http://localhost:5678`, a Slack workspace "Rodo workspace" with a bot app named "THE GD AGENT", channel `#new-channel`.
+- Environment: NEW Windows laptop (user LENOVO), project folder `C:\Users\LENOVO\Downloads\ai-design-agency-n8n-v3\ai-design-agency-n8n` (the old `D:\Mota bhai projects\Maria B agent` was on the previous laptop). n8n 2.45.7 at `http://localhost:5678`. Slack workspace "Rodo workspace" (owner account rudo_rauf3, second account "Agent" is the owner's own), bot app **GD Bot** (App ID A0CDM8F8ULT), channel `#new-channel` (ID C0CDK1BF5MG). cloudflared is installed but not on PATH: run it as `& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:5678`.
 
 ## 2. What the project is
 A Slack bot built in n8n. A team member mentions the bot with a request. The bot checks the brief, plans a 10-post Instagram campaign with GPT-4o, draws Post 1 with Ideogram v2, checks the image with GPT-4o Vision, shows a review card in Slack, and only after a human clicks Approve does it generate posts 2 to 10.
@@ -55,7 +55,7 @@ Not done: **fashion photo mode** (real product photo placed into the design), im
 
 ## 6. Files
 ```
-slack-design-agent-2stage-workflow.json   main workflow (GENERATED, 54 nodes). Import this.
+slack-design-agent-2stage-workflow.json   main workflow (GENERATED, 62 nodes incl. test-mode switches). Import this.
 error-notifier-workflow.json              optional failure alerts to Slack
 client-brain/apex_athletics_brain.json    sample client
 client-brain/maria_b_brain.json           Maria B study brain (ASSUMED colors/tone, public facts from Wikipedia)
@@ -63,7 +63,7 @@ client-brain/client-memory-schema.json    brain schema
 src/code/*.js                             source of every Code node
 src/shared/intake_options.json            platforms, goals, photo options for the intake form
 tools/build_workflow.py                   rebuilds the workflow JSON
-tests/run_tests.mjs                       63 checks on the Code nodes (mocked n8n)
+tests/run_tests.mjs                       71 checks on the Code nodes (mocked n8n)
 archive/                                  old direct workflow (do not import)
 start-n8n.bat / .ps1                      launch n8n with .env and the flags the workflow needs
 .env.example                              copy to .env and fill in keys
@@ -83,20 +83,21 @@ Change workflow: edit `src/code/*.js`, a brain file, or `intake_options.json`, r
 Harmless n8n console messages: `getaddrinfo ENOTFOUND telemetry.n8n.io`, `403 Instance AI is disabled`.
 
 ## 8. Owner's progress when this was written
-- Project files are in the folder and `.env` exists (key status not confirmed).
-- The first re-extract used the OLD zip (tests showed 42 checks). The new version shows **63 checks**. If tests show 42, the old zip was extracted again (browser may have saved the new download as `... (1).zip`, use the newest file in Downloads).
-- Not yet confirmed: n8n restarted with the new start script, workflow imported and published, tunnel running, Slack URLs verified, first live run. **Nothing has been run against live Slack, OpenAI or Ideogram yet.**
+- Done on the new laptop: `.env` created (Slack bot token, signing secret, alert channel filled; no OpenAI or Ideogram key yet), n8n owner reset and new account, old 11-node workflow archived, the 54-node workflow imported and Published, cloudflared tunnel running, Slack Event Subscriptions URL **Verified** with `app_mention`, Interactivity URL saved.
+- **First live run worked up to the ack:** `@GD Bot client: maria_b_study I need 10 social media posts` got the bot's acknowledgement in the thread (signature, tunnel, mention, bot token and brain loading all confirmed). It then stops at Intake Evaluator because there is no OpenAI key.
+- v4 adds **test mode** (`TEST_MODE=true` in `.env`) so the rest of the flow can be tested for free. Next: re-import the v4 workflow, add `TEST_MODE=true`, restart n8n, run the full flow (form, draft card, Approve, Edit, Discard).
+- The tunnel URL changes every time cloudflared restarts. Then update both Slack URLs (Event Subscriptions must show Verified again).
 
 ## 9. Known risks and limits
 - Untested against live services. Most likely to need a tweak: the 3-call Slack file upload, and Slack modal payloads.
-- OpenAI and Ideogram APIs need paid credit. A planned "test mode" (fake image) would let the whole Slack flow be tested for free. Not built yet.
+- OpenAI and Ideogram APIs need paid credit. Test mode (v4) covers this: 4 IF nodes `Test Mode? (...)` route around the 4 paid calls to `Mock ...` Code nodes that return the same response shapes. Placeholder images come from placehold.co (needs internet). Captions and the ack are marked TEST MODE so nobody mistakes them for real output.
 - Static-data memory is lost if the workflow is deleted or never published. For many clients move jobs and learned rules to a database or Sheet.
 - Ideogram supports `ASPECT_4_5`, `ASPECT_1_1`, `ASPECT_9_16`, `ASPECT_16_9` (checked). Urdu script inside images will render badly, keep image text Latin and put Urdu in captions.
 - Fashion: AI must not draw the garments. The intake asks about real photos and the CD prompt forbids redrawing products, but the attached photo is **not yet used** in the image.
 - Model prices and names in the PDFs may be outdated. Check current pricing before quoting a client.
 
 ## 10. Next steps (recommended order)
-1. Get one real run working end to end in a test Slack channel (or build the free test mode first if there is no API credit).
+1. Run the full flow in test mode, then switch `TEST_MODE=false` with real keys and run it once for real.
 2. Fashion photo mode: take the real product photo from the Slack attachment, generate only background, lighting and typography around it, and keep the product unchanged. Evaluate an image-editing model or a background-replacement API.
 3. Record a 2-minute demo video (mention, form, draft, Approve) for the portfolio and the Fiverr gig.
 4. Google Sheets audit log (timestamp, client, post number, tokens, QA score, cost).
@@ -104,4 +105,4 @@ Harmless n8n console messages: `getaddrinfo ENOTFOUND telemetry.n8n.io`, `403 In
 6. Selling: start with a small monthly 10-post pack priced in PKR for local brands, raise price after the first clients. Do not copy the README's $1,499+ retainer.
 
 ## 11. Prompt to paste into the next chat
-> I am continuing the "Slack AI Design Agency (n8n)" project. Read the attached PROJECT_HANDOVER.md first. The workflow is built (intake gate, real Vision QA, working buttons, multi-client brain, 63 passing code tests) but not yet tested live. My folder is D:\Mota bhai projects\Maria B agent on Windows with n8n on localhost:5678. Next I want to: [live test / test mode / fashion photo mode / demo video / Google Sheets log]. Explain step by step in simple language.
+> I am continuing the "Slack AI Design Agency (n8n)" project. Read the attached PROJECT_HANDOVER.md first. The workflow is built (intake gate, real Vision QA, working buttons, multi-client brain, 71 passing code tests, test mode) and live-tested up to the Slack ack on my new laptop. My folder is C:\Users\LENOVO\Downloads\ai-design-agency-n8n-v3\ai-design-agency-n8n on Windows with n8n on localhost:5678. Next I want to: [live test / test mode / fashion photo mode / demo video / Google Sheets log]. Explain step by step in simple language.

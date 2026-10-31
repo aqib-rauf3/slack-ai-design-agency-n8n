@@ -180,7 +180,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Immediate acknowledgement in the Slack thread.\nconst e = $input.first().json.body.event;\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: e.channel,\n      thread_ts: e.thread_ts || e.ts,\n      text: ':brain: Got it. Checking your brief against the client brain. If something is missing I will ask a few quick questions first, then I will make a single draft (Post 1) and wait for your approval before generating the rest.',\n    },\n  },\n}];\n"
+        "jsCode": "// Immediate acknowledgement in the Slack thread.\nconst e = $input.first().json.body.event;\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: e.channel,\n      thread_ts: e.thread_ts || e.ts,\n      text: ':brain: Got it. Checking your brief against the client brain. If something is missing I will ask a few quick questions first, then I will make a single draft (Post 1) and wait for your approval before generating the rest.' + ($env.TEST_MODE === 'true' ? '\\n:test_tube: _TEST MODE: fake AI and placeholder images, no API cost._' : ''),\n    },\n  },\n}];\n"
       },
       "id": "n-build-ack",
       "name": "Build Ack",
@@ -393,6 +393,98 @@
       "position": [
         3060,
         360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $env.TEST_MODE === 'true' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-test-mode-intake",
+      "name": "Test Mode? (Intake)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// TEST MODE (TEST_MODE=true in .env): stands in for the OpenAI intake call. Same response shape, no cost.\n// Very simple keyword matching. A vague request (\"I need 10 posts\") returns nulls so the intake form still opens.\nconst t = String($input.first().json.intake_user_prompt || '').toLowerCase();\nconst has = (...words) => words.some((w) => t.includes(w));\n\nconst platform =\n  has('story', 'reel', '9:16') ? 'story_9x16'\n  : has('square', '1:1') ? 'square_1x1'\n  : has('linkedin', 'landscape', '16:9') ? 'landscape_16x9'\n  : has('feed', '4:5', 'instagram') ? 'ig_feed_4x5'\n  : null;\nconst objective =\n  has('launch', 'new collection') ? 'product_launch'\n  : has('sale', 'discount', 'offer') ? 'sale_promo'\n  : has('eid', 'wedding', 'festival') ? 'festival_event'\n  : has('awareness') ? 'brand_awareness'\n  : has('engagement', 'community') ? 'engagement'\n  : null;\nconst focus = t.match(/\\bfor (?:the |our |my )?([a-z0-9 '&-]{3,60}?)(?:[.,!]|$)/);\nconst assets = has('no photo', 'without photo') ? 'none' : has('attached', 'will attach', 'photos provided') ? 'will_attach' : null;\n\nconst brief = { platform, objective, product_focus: focus ? focus[1].trim() : null, audience: null, visual_style: null, assets };\nreturn [{ json: { test_mode: true, choices: [{ message: { content: JSON.stringify(brief) } }] } }];\n"
+      },
+      "id": "n-mock-intake",
+      "name": "Mock Intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $env.TEST_MODE === 'true' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-test-mode-creative-director",
+      "name": "Test Mode? (Creative Director)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// TEST MODE: stands in for the GPT-4o Creative Director. Returns a fixed 10-post plan in the same JSON shape.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst i = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[i.job_id];\nif (!job || !job.brief) throw new Error('No brief saved for job ' + i.job_id);\n\nconst b = job.brief;\nconst brand = job.brand_name || 'The Brand';\nconst goal = (OPTIONS.objectives.find((o) => o.id === b.objective) || OPTIONS.objectives[0]).label;\nconst tag = '#' + brand.replace(/[^A-Za-z0-9]/g, '');\nconst headlines = [\n  'THE NEW EDIT', 'CRAFTED BY HAND', 'MADE FOR MOMENTS', 'EVERY THREAD MATTERS', 'OWN THE SEASON',\n  'TIMELESS GRACE', 'DETAILS DEFINE YOU', 'DRESSED IN LIGHT', 'YOUR STORY WOVEN', 'SHOP THE EDIT',\n];\nconst posts = headlines.map((h, n) => ({\n  headline_text: h,\n  art_direction_prompt: `TEST MODE placeholder for post ${n + 1}. Premium fashion layout for ${brand}, focus: ${b.product_focus}. Text on the image reads exactly: \"${h}\".`,\n  caption: `[TEST MODE] ${brand}: ${b.product_focus}. ${goal}, post ${n + 1} of 10. The real AI caption appears here once OPENAI_API_KEY is set.`,\n  hashtags: `${tag} #TestMode`,\n}));\nconst plan = { campaign_theme: `TEST MODE: ${b.product_focus}`, posts };\nreturn [{ json: { test_mode: true, choices: [{ message: { content: JSON.stringify(plan) } }] } }];\n"
+      },
+      "id": "n-mock-creative-director",
+      "name": "Mock Creative Director",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3060,
+        180
       ]
     },
     {
@@ -965,6 +1057,98 @@
           "conditions": [
             {
               "id": "c1",
+              "leftValue": "={{ $env.TEST_MODE === 'true' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-test-mode-render",
+      "name": "Test Mode? (Render)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// TEST MODE: stands in for Ideogram. Returns a free placeholder image (placehold.co) with the headline printed on it,\n// in the same size as the brief, so download, Slack upload and the review card all run for real.\nconst s = $input.first().json;\nconst sizes = { ASPECT_4_5: '1080x1350', ASPECT_1_1: '1080x1080', ASPECT_9_16: '1080x1920', ASPECT_16_9: '1920x1080' };\nconst size = sizes[s.aspect_ratio] || sizes.ASPECT_4_5;\nconst url = `https://placehold.co/${size}/6B1E3A/F3E6D0/png?font=playfair-display&text=${encodeURIComponent(s.headline || 'TEST POST')}`;\nreturn [{ json: { test_mode: true, data: [{ url, prompt: s.art_prompt }] } }];\n"
+      },
+      "id": "n-mock-render",
+      "name": "Mock Render",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3060,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $env.TEST_MODE === 'true' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-test-mode-vision-qa",
+      "name": "Test Mode? (Vision QA)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// TEST MODE: stands in for GPT-4o Vision QA. Passes by default.\n// Set TEST_MODE_QA_FAIL_FIRST=true in .env to fail the first attempt once, so you can watch the retry loop.\nconst s = $input.first().json;\nconst failOnce = $env.TEST_MODE_QA_FAIL_FIRST === 'true' && s.attempt === 1;\nconst qa = failOnce\n  ? { detected_text: String(s.headline || '').replace(/E/, '3'), legibility_score: 70, is_blurry: false, has_distortion: false, violates_banned_elements: false, pass: false, critique: 'TEST MODE: simulated spelling error' }\n  : { detected_text: s.headline, legibility_score: 95, is_blurry: false, has_distortion: false, violates_banned_elements: false, pass: true, critique: 'TEST MODE: QA simulated' };\nreturn [{ json: { test_mode: true, choices: [{ message: { content: JSON.stringify(qa) } }] } }];\n"
+      },
+      "id": "n-mock-vision-qa",
+      "name": "Mock Vision QA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3500,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
               "leftValue": "={{ $json.proceed }}",
               "rightValue": "",
               "operator": {
@@ -1235,6 +1419,42 @@
     }
   ],
   "connections": {
+    "Test Mode? (Intake)": {
+      "main": [
+        [
+          {
+            "node": "Mock Intake",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Intake Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Mode? (Creative Director)": {
+      "main": [
+        [
+          {
+            "node": "Mock Creative Director",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Creative Director",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Slack Events Webhook": {
       "main": [
         [
@@ -1346,7 +1566,7 @@
       "main": [
         [
           {
-            "node": "Intake Evaluator",
+            "node": "Test Mode? (Intake)",
             "type": "main",
             "index": 0
           }
@@ -1372,6 +1592,17 @@
       ]
     },
     "Intake Evaluator": {
+      "main": [
+        [
+          {
+            "node": "Parse Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock Intake": {
       "main": [
         [
           {
@@ -1426,7 +1657,7 @@
       "main": [
         [
           {
-            "node": "Creative Director",
+            "node": "Test Mode? (Creative Director)",
             "type": "main",
             "index": 0
           }
@@ -1434,6 +1665,17 @@
       ]
     },
     "Creative Director": {
+      "main": [
+        [
+          {
+            "node": "Parse Campaign Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock Creative Director": {
       "main": [
         [
           {
@@ -1686,6 +1928,42 @@
         ]
       ]
     },
+    "Test Mode? (Render)": {
+      "main": [
+        [
+          {
+            "node": "Mock Render",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Render Image (Ideogram v2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Mode? (Vision QA)": {
+      "main": [
+        [
+          {
+            "node": "Mock Vision QA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vision QA Inspector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Parse Campaign Plan": {
       "main": [
         [
@@ -1730,7 +2008,7 @@
       "main": [
         [
           {
-            "node": "Render Image (Ideogram v2)",
+            "node": "Test Mode? (Render)",
             "type": "main",
             "index": 0
           }
@@ -1748,11 +2026,22 @@
         ]
       ]
     },
+    "Mock Render": {
+      "main": [
+        [
+          {
+            "node": "Collect Render Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Collect Render Result": {
       "main": [
         [
           {
-            "node": "Vision QA Inspector",
+            "node": "Test Mode? (Vision QA)",
             "type": "main",
             "index": 0
           }
@@ -1760,6 +2049,17 @@
       ]
     },
     "Vision QA Inspector": {
+      "main": [
+        [
+          {
+            "node": "Evaluate QA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock Vision QA": {
       "main": [
         [
           {

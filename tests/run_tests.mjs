@@ -252,4 +252,44 @@ staticData.jobs[ctx.job_id].status = 'awaiting_review';
 r = await run('Handle Discard', { job_id: ctx.job_id, user_id: 'U9', channel: 'C1', message_ts: '222.2' });
 ok(staticData.jobs[ctx.job_id].status === 'discarded' && j(r).slack_url.endsWith('chat.update'), 'discard stops the job and updates the card');
 
+// ---------- 4. Test mode (TEST_MODE=true): free mocks with the same response shapes
+console.log('Test mode');
+const conn = wf.connections;
+const outs = (n, i) => ((conn[n] && conn[n].main[i]) || []).map((c) => c.node);
+for (const [label, real, next] of [['Intake', 'Intake Evaluator', 'Parse Intake'], ['Creative Director', 'Creative Director', 'Parse Campaign Plan'], ['Render', 'Render Image (Ideogram v2)', 'Collect Render Result'], ['Vision QA', 'Vision QA Inspector', 'Evaluate QA']]) {
+  const iff = `Test Mode? (${label})`;
+  assert.ok(outs(iff, 0).includes('Mock ' + label) && outs(iff, 1).includes(real) && outs('Mock ' + label, 0).includes(next) && outs(real, 0).includes(next), 'wiring ' + label);
+}
+ok(outs('Within Daily Limit?', 0)[0] === 'Test Mode? (Intake)' && outs('Render Input', 0)[0] === 'Test Mode? (Render)', 'all 4 paid calls have a test-mode switch');
+env.TEST_MODE = 'true';
+r = await run('Build Ack', { body: { event: { channel: 'C7', ts: '7.7' } } });
+ok(j(r).slack_payload.text.includes('TEST MODE'), 'ack says TEST MODE');
+delete staticData.usage.maria_b_study;
+r = await run('Load Brain & Build Prompt', mkEvent('client: maria_b_study I need 10 social media posts'));
+r = await run('Mock Intake', j(r));
+r = await run('Parse Intake', j(r));
+ok(j(r).complete === false && j(r).missing.includes('platform'), 'mock intake: vague request still opens the form');
+r = await run('Load Brain & Build Prompt', mkEvent('client: maria_b_study instagram feed posts for the eid lawn collection, no photos'));
+const tctx = j(r);
+r = await run('Mock Intake', tctx);
+r = await run('Parse Intake', j(r));
+ok(j(r).complete === true && staticData.jobs[tctx.job_id].brief.product_focus === 'eid lawn collection', 'mock intake: clear request skips the form');
+r = await run('Build CD Prompt', { job_id: tctx.job_id });
+r = await run('Mock Creative Director', j(r));
+r = await run('Parse Campaign Plan', j(r));
+let titem = j(r);
+ok(titem.total === 10 && titem.caption.startsWith('[TEST MODE]'), 'mock plan: 10 posts, captions marked TEST MODE');
+r = await run('Render Input', titem);
+r = await run('Mock Render', j(r));
+ok(j(r).data[0].url.startsWith('https://placehold.co/1080x1350/') && j(r).data[0].url.includes('THE%20NEW%20EDIT'), 'mock image: right size, headline printed');
+r = await run('Collect Render Result', j(r));
+r = await run('Mock Vision QA', j(r));
+r = await run('Evaluate QA', j(r));
+ok(j(r).qa_pass && j(r).proceed, 'mock QA passes through the real QA rules');
+env.TEST_MODE_QA_FAIL_FIRST = 'true';
+r = await run('Mock Vision QA', outputs['Collect Render Result'][0].json);
+r = await run('Evaluate QA', j(r));
+ok(j(r).qa_pass === false && j(r).proceed === false, 'TEST_MODE_QA_FAIL_FIRST triggers one retry');
+delete env.TEST_MODE; delete env.TEST_MODE_QA_FAIL_FIRST;
+
 console.log(`\nAll ${passed} checks passed.`);

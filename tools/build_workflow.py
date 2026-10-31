@@ -87,6 +87,20 @@ def if_node(name, pos, left, value=True):
     return n(name, "if", 2, pos, {"conditions": cond_bool(left, value), "options": {}})
 
 
+TEST_MODE_EXPR = "={{ $env.TEST_MODE === 'true' }}"
+
+
+def test_switch(label, real, mock_file, if_pos, mock_pos):
+    """TEST_MODE=true routes around a paid API call to a free mock with the same response shape."""
+    if_name = "Test Mode? (" + label + ")"
+    mock_name = "Mock " + label
+    if_node(if_name, if_pos, TEST_MODE_EXPR)
+    js(mock_name, mock_pos, mock_file)
+    connect(if_name, mock_name, 0)
+    connect(if_name, real, 1)
+    return if_name, mock_name
+
+
 def slack_headers():
     return {"parameters": [{"name": "Authorization", "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"}]}
 
@@ -137,6 +151,8 @@ http("Creative Director", [2840, 360], "https://api.openai.com/v1/chat/completio
      "={{ JSON.stringify({ model: 'gpt-4o', response_format: { type: 'json_object' }, temperature: 0.7, messages: [ { role: 'system', content: $json.system_prompt }, { role: 'user', content: $json.user_prompt } ] }) }}",
      headers=OPENAI_HEADERS)
 js("Parse Campaign Plan", [3060, 360], "parse_plan")
+INTAKE_IF, INTAKE_MOCK = test_switch("Intake", "Intake Evaluator", "mock_intake", [1960, 260], [2180, 260])
+CD_IF, CD_MOCK = test_switch("Creative Director", "Creative Director", "mock_creative_director", [2840, 180], [3060, 180])
 
 # Shared terminal node: every Code node that builds {slack_url, slack_payload} ends here.
 http("Slack Notify", [2000, 1000], "={{ $json.slack_url }}", SLACK_BODY)
@@ -152,16 +168,18 @@ connect("Valid Mention?", "Build Ack", 0)
 connect("Valid Mention?", "Load Brain & Build Prompt", 0)
 connect("Build Ack", "Slack Notify")
 connect("Load Brain & Build Prompt", "Within Daily Limit?")
-connect("Within Daily Limit?", "Intake Evaluator", 0)
+connect("Within Daily Limit?", INTAKE_IF, 0)
 connect("Within Daily Limit?", "Build Limit Message", 1)
 connect("Build Limit Message", "Slack Notify")
 connect("Intake Evaluator", "Parse Intake")
+connect(INTAKE_MOCK, "Parse Intake")
 connect("Parse Intake", "Brief Complete?")
 connect("Brief Complete?", "Build CD Prompt", 0)
 connect("Brief Complete?", "Build Intake Request", 1)
 connect("Build Intake Request", "Slack Notify")
-connect("Build CD Prompt", "Creative Director")
+connect("Build CD Prompt", CD_IF)
 connect("Creative Director", "Parse Campaign Plan")
+connect(CD_MOCK, "Parse Campaign Plan")
 
 # ----------------------------------------------------------- Interactivity path
 n("Slack Interactivity Webhook", "webhook", 2, [200, 1000],
@@ -237,6 +255,8 @@ http("Vision QA Inspector", [3280, 700], "https://api.openai.com/v1/chat/complet
      "={{ JSON.stringify({ model: 'gpt-4o', response_format: { type: 'json_object' }, temperature: 0, messages: [ { role: 'system', content: $json.qa_system_prompt }, { role: 'user', content: [ { type: 'text', text: 'Inspect this image.' }, { type: 'image_url', image_url: { url: $json.image_url } } ] } ] }) }}",
      headers=OPENAI_HEADERS)
 js("Evaluate QA", [3500, 700], "evaluate_qa")
+RENDER_IF, RENDER_MOCK = test_switch("Render", "Render Image (Ideogram v2)", "mock_render", [2840, 540], [3060, 540])
+QA_IF, QA_MOCK = test_switch("Vision QA", "Vision QA Inspector", "mock_vision_qa", [3280, 540], [3500, 540])
 if_node("QA OK or Out of Retries?", [3720, 700], "={{ $json.proceed }}")
 js("Build Retry Prompt", [3720, 920], "build_retry")
 n("Download Image", "httpRequest", 4.2, [3940, 700],
@@ -266,10 +286,12 @@ connect("Parse Campaign Plan", "Post Queue Loop")
 connect("Post Queue Loop", "Build Batch Complete", 0)
 connect("Post Queue Loop", "Render Input", 1)
 connect("Build Batch Complete", "Slack Notify")
-connect("Render Input", "Render Image (Ideogram v2)")
+connect("Render Input", RENDER_IF)
 connect("Render Image (Ideogram v2)", "Collect Render Result")
-connect("Collect Render Result", "Vision QA Inspector")
+connect(RENDER_MOCK, "Collect Render Result")
+connect("Collect Render Result", QA_IF)
 connect("Vision QA Inspector", "Evaluate QA")
+connect(QA_MOCK, "Evaluate QA")
 connect("Evaluate QA", "QA OK or Out of Retries?")
 connect("QA OK or Out of Retries?", "Download Image", 0)
 connect("QA OK or Out of Retries?", "Build Retry Prompt", 1)
