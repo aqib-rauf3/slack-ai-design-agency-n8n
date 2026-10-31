@@ -1,42 +1,59 @@
-# Enterprise AI Graphic Design Agency & Automation Network
+# System architecture
 
-This repository implements an autonomous, multi-agent AI graphic design agency integrated with Slack and orchestrated locally with **n8n**.
-
-## 1. System Architecture
+Everything below exists in `slack-design-agent-2stage-workflow.json`.
 
 ```mermaid
 flowchart TD
-    Client["Marketing Team (Slack App Mention)"] --> SlackWebhook["Slack Event Webhook (/webhook/slack-design-agent)"]
-    SlackWebhook --> BrainLoader["Load Client Memory / Brain\n(Brand Guidelines + Past Approvals + Rejections)"]
-    
-    subgraph MultiAgentStudio["MNC Design Studio Network"]
-        BrainLoader --> CD["1. Creative Director Agent (Senior)\n(Master theme & Asset #1 Proof-of-Concept)"]
-        CD --> Engine["2. Specialized Rendering Engine\n(Ideogram v2 / Recraft v3 / FLUX.1)"]
-        CD --> Copy["3. Lead Copywriter Agent\n(Hooks, Captions, CTAs, Hashtags)"]
-        Engine & Copy --> QA["4. Multimodal Vision QA Inspector\n(GPT-4o Vision: Spelling, Sharpness, Palette)"]
-    end
-    
-    QA --> SlackDraft["Slack Thread Interactive Card"]
-    
-    subgraph SlackGate["2-Stage Token-Capping Gate"]
-        SlackDraft -->|Button: Discard| Abort["Abort ($0.05 spend capped)"]
-        SlackDraft -->|Button: Request Edit| Revise["Human in the loop revision"]
-        SlackDraft -->|Button: Approve Batch| BatchRun["Generate Remaining 9 Posts"]
-    end
-    
-    BatchRun --> FinalDelivery["Post 10 Formatted Campaign Cards to Slack Thread"]
+  A["Slack mention"] --> B["Events webhook"]
+  B --> C["Verify Slack signature"]
+  C -->|invalid| X["401"]
+  C -->|valid| D{"URL verification?"}
+  D -->|yes| E["Reply with challenge"]
+  D -->|no| F["Reply 200 right away"]
+  F --> G{"Real mention, not a retry?"}
+  G -->|yes| H["Post ack in thread"]
+  G -->|yes| I["Load client brain + learned rules, check daily limit"]
+  I -->|limit reached| J["Post limit message"]
+  I --> IE["Intake Evaluator: extract platform, goal, product, audience, style, photos"]
+  IE --> IC{"Platform, goal and product clear?"}
+  IC -->|no| IQ["Post checklist + button"]
+  IQ --> IM["Slack form with 6 questions, pre-filled"]
+  IM --> IS["Save brief, confirm it in thread"]
+  IC -->|yes| CP
+  IS --> CP["Build CD prompt with brief and image size"]
+  CP --> K["GPT-4o: plan 10 posts"]
+  K --> L["Save plan on job, queue Post 1"]
+  L --> Q
+
+  subgraph Pipeline["Render pipeline (one post at a time)"]
+    Q["Post Queue Loop"] --> R["Ideogram v2: render"]
+    R --> S["GPT-4o Vision QA"]
+    S --> T{"Text exact, sharp, no distortion?"}
+    T -->|no, retries left| U["Add QA feedback to prompt"] --> R
+    T -->|yes, or retries used| V["Upload image to Slack"]
+    V --> W{"Mode"}
+    W -->|draft| Y["Review card with 3 buttons"]
+    W -->|batch| Z["Post caption, next post"] --> Q
+  end
+
+  Y --> BTN["Slack interactivity webhook"]
+  BTN --> SIG["Verify signature, reply 200"]
+  SIG --> RT{"Button"}
+  RT -->|Approve| AP["Queue posts 2-10"] --> Q
+  RT -->|Request changes| MD["Open modal"] --> SUB["Save as learned rule, queue revised draft"] --> Q
+  RT -->|Discard| DS["Close job, remove buttons"]
 ```
 
-## 2. Multi-Agent Hierarchy
+## Job memory
+Stored in n8n workflow static data (works while the workflow is active):
+- `jobs[job_id]`: client, Slack channel and thread, confirmed brief, campaign plan, status (`intake`, `awaiting_intake`, `planning`, `drafting`, `awaiting_review`, `revising`, `generating`, `complete`, `discarded`), QA warning count.
+- `learned[client_id]`: rules created from "Request changes" notes (last 20).
+- `usage[client_id][date]`: images rendered per day.
 
-- **Executive Creative Director**: Deconstructs briefs, enforces brand guidelines, and defines multi-post narrative arcs.
-- **Art Director & Lead Copywriter**: Establishes composition, lighting, aspect ratios (4:5 / 1:1), and crafts platform-optimized captions.
-- **Production Workers**: Formats prompt tokens for specialized graphic engines.
-- **Multimodal Vision QA Inspector**: Automatically checks rendered assets character-by-character for spelling errors, blurry text, and brand alignment.
+## Why one pipeline for draft and batch
+Stage 1 sends Post 1 and stage 2 sends Posts 2 to 10 into the same loop. QA, retries, uploads and delivery are written once.
 
-## 3. Unit Economics & Pricing Model
-
-- **Raw API Cost per 10-Post Batch**: ~$0.08 (Budget/Flux) to ~$0.65 (Premium Ideogram v2 + GPT-4o).
-- **Aborted Draft Cost**: ~$0.05 (prevents runaway token costs).
-- **Agency Value**: Traditional agencies charge $2,500 – $6,000 for a 10-post batch.
-- **Enterprise SaaS Retainer**: $1,499 – $3,999/month (>99% Gross Profit Margin).
+## Cost levers
+- Draft first: 1 plan call + 1 image + 1 QA call before a human approves.
+- Retries are capped at 2 per image.
+- Daily image limit per client.

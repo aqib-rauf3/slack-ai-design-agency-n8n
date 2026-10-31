@@ -1,0 +1,61 @@
+{
+  "name": "AI Design Agency - Error Notifier",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $env.SLACK_ALERT_CHANNEL, text: ':rotating_light: Workflow failed: ' + $json.workflow.name + ' | node: ' + ($json.execution.lastNodeExecuted || 'unknown') + ' | ' + (($json.execution.error && $json.execution.error.message) || 'no message') + ' | ' + ($json.execution.url || '') }) }}",
+        "options": {}
+      },
+      "id": "e-slack",
+      "name": "Alert Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Alert Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

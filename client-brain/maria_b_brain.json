@@ -1,0 +1,84 @@
+{
+  "client_id": "maria_b_study",
+  "company_name": "Maria.B. (study example)",
+  "public_facts": {
+    "founder": "Maria Butt",
+    "founded": "1999, Lahore, Pakistan",
+    "stores": "38 locations as of 2025",
+    "product_lines": [
+      "Lawn",
+      "Linen",
+      "Sateen",
+      "Silk",
+      "Eid Lawn",
+      "Evening Wear",
+      "Couture",
+      "Bridals",
+      "Mbroidered",
+      "MPrints",
+      "MBasics",
+      "Casuals",
+      "Mkids",
+      "Jewellery",
+      "Perfumes"
+    ],
+    "known_for": "Embroidered and embellished collections for everyday, festive and bridal wear",
+    "source": "https://en.wikipedia.org/wiki/Maria_B"
+  },
+  "brand_guidelines": {
+    "mission": "ASSUMED: Make Pakistani women feel luxurious and confident, from everyday lawn to bridal couture",
+    "tone_of_voice": [
+      "Elegant",
+      "Confident",
+      "Warm",
+      "Celebratory",
+      "Premium but not distant"
+    ],
+    "color_palette": {
+      "primary_hex": "#111111",
+      "secondary_hex": "#B08D57",
+      "accent_hex": "#7A1F3D",
+      "background_hex": "#FAF7F2"
+    },
+    "typography_rules": {
+      "headline_font": "ASSUMED: high-contrast serif or refined sans, Latin script only (AI image models spell Urdu script badly)",
+      "casing": "Title Case or lowercase for elegance, never shouting ALL CAPS",
+      "max_text_characters": 20
+    },
+    "banned_elements": [
+      "No discount badges, red or yellow sale stickers, or clipart",
+      "No AI-generated garments (customers expect the exact real product). Use real product photos, AI only for layout, background and copy",
+      "No distorted hands, faces, or embroidery that looks melted",
+      "No competitor brand names or lookalike logos",
+      "No unverified claims such as 'best in Pakistan'"
+    ]
+  },
+  "collection_context": {
+    "ASSUMED_audience": "Women 20-45 in Pakistan and the diaspora (UK, US, UAE) shopping for lawn, festive, wedding and bridal",
+    "ASSUMED_seasons": [
+      "Summer lawn",
+      "Eid festive",
+      "Winter linen and velvet",
+      "Wedding season",
+      "Bridal couture"
+    ],
+    "ASSUMED_social": {
+      "instagram": "4:5 (1080x1350) for product and lookbook, 9:16 for Reels covers",
+      "caption_structure": "1. Short elegant hook\n2. 1-2 lines about fabric or embroidery\n3. Clear CTA (shop now, visit store)\n4. 6-8 hashtags"
+    }
+  },
+  "approved_past_work": [],
+  "rejection_history": [],
+  "_note": "STUDY DRAFT: public_facts come from Wikipedia. Colors, tone and banned elements are ASSUMED, not Maria B's official guidelines. approved_past_work and rejection_history are empty on purpose: fill them from the real client.",
+  "aliases": [
+    "maria b",
+    "maria.b",
+    "mariab"
+  ],
+  "slack_channel_ids": [],
+  "limits": {
+    "max_images_per_day": 40
+  },
+  "default_audience": "Women 20-45 in Pakistan and the diaspora shopping for lawn, festive, wedding and bridal wear",
+  "requires_product_photos": true
+}

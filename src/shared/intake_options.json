@@ -1,0 +1,19 @@
+{
+  "platforms": [
+    { "id": "ig_feed_4x5", "label": "Instagram Feed 4:5 (1080x1350)", "ratio": "4:5 portrait (1080x1350)", "aspect": "ASPECT_4_5" },
+    { "id": "square_1x1", "label": "Square 1:1 (Instagram, Facebook)", "ratio": "1:1 square (1080x1080)", "aspect": "ASPECT_1_1" },
+    { "id": "story_9x16", "label": "Story or Reel cover 9:16", "ratio": "9:16 vertical (1080x1920)", "aspect": "ASPECT_9_16" },
+    { "id": "landscape_16x9", "label": "Landscape 16:9 (Facebook, LinkedIn, X)", "ratio": "16:9 landscape", "aspect": "ASPECT_16_9" }
+  ],
+  "objectives": [
+    { "id": "brand_awareness", "label": "Brand awareness" },
+    { "id": "product_launch", "label": "Product or collection launch" },
+    { "id": "sale_promo", "label": "Sale or offer" },
+    { "id": "festival_event", "label": "Festival or event (Eid, wedding season)" },
+    { "id": "engagement", "label": "Engagement and community" }
+  ],
+  "assets": [
+    { "id": "will_attach", "label": "I will attach real product photos" },
+    { "id": "none", "label": "No photos, an AI-made image is fine" }
+  ]
+}

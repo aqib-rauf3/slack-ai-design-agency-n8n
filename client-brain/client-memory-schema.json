@@ -4,28 +4,58 @@
   "description": "The persistent memory and knowledge base for an enterprise client",
   "type": "object",
   "properties": {
-    "client_id": { "type": "string" },
-    "company_name": { "type": "string" },
+    "client_id": {
+      "type": "string"
+    },
+    "company_name": {
+      "type": "string"
+    },
     "brand_guidelines": {
       "type": "object",
       "properties": {
-        "mission": { "type": "string" },
-        "tone_of_voice": { "type": "array", "items": { "type": "string" } },
+        "mission": {
+          "type": "string"
+        },
+        "tone_of_voice": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "color_palette": {
           "type": "object",
           "properties": {
-            "primary_hex": { "type": "string" },
-            "secondary_hex": { "type": "string" },
-            "accent_hex": { "type": "string" },
-            "background_hex": { "type": "string" }
+            "primary_hex": {
+              "type": "string"
+            },
+            "secondary_hex": {
+              "type": "string"
+            },
+            "accent_hex": {
+              "type": "string"
+            },
+            "background_hex": {
+              "type": "string"
+            }
           }
         },
         "typography_rules": {
-          "headline_font": { "type": "string" },
-          "casing": { "type": "string" },
-          "max_text_characters": { "type": "integer" }
+          "headline_font": {
+            "type": "string"
+          },
+          "casing": {
+            "type": "string"
+          },
+          "max_text_characters": {
+            "type": "integer"
+          }
         },
-        "banned_elements": { "type": "array", "items": { "type": "string" } }
+        "banned_elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "approved_past_work": {
@@ -34,12 +64,24 @@
       "items": {
         "type": "object",
         "properties": {
-          "campaign_name": { "type": "string" },
-          "visual_style_description": { "type": "string" },
-          "headline": { "type": "string" },
-          "copy_snippet": { "type": "string" },
-          "why_approved": { "type": "string" },
-          "image_reference_url": { "type": "string" }
+          "campaign_name": {
+            "type": "string"
+          },
+          "visual_style_description": {
+            "type": "string"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "copy_snippet": {
+            "type": "string"
+          },
+          "why_approved": {
+            "type": "string"
+          },
+          "image_reference_url": {
+            "type": "string"
+          }
         }
       }
     },
@@ -49,12 +91,58 @@
       "items": {
         "type": "object",
         "properties": {
-          "date": { "type": "string" },
-          "rejected_element": { "type": "string" },
-          "client_feedback": { "type": "string" },
-          "corrective_rule": { "type": "string" }
+          "date": {
+            "type": "string"
+          },
+          "rejected_element": {
+            "type": "string"
+          },
+          "client_feedback": {
+            "type": "string"
+          },
+          "corrective_rule": {
+            "type": "string"
+          }
         }
       }
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Words in a Slack request that select this client"
+    },
+    "slack_channel_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Slack channel IDs that always use this client"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_images_per_day": {
+          "type": "integer"
+        }
+      }
+    },
+    "collection_context": {
+      "type": "object",
+      "description": "Optional audience, seasons and social specs"
+    },
+    "public_facts": {
+      "type": "object",
+      "description": "Optional verified public facts about the brand"
+    },
+    "default_audience": {
+      "type": "string",
+      "description": "Used when the client does not state an audience"
+    },
+    "requires_product_photos": {
+      "type": "boolean",
+      "description": "True for fashion/retail: AI must never draw the product, and the intake asks about real photos"
     }
   }
 }

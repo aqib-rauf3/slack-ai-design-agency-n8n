@@ -1,17 +1,36 @@
 {
-  "name": "Enterprise Slack AI Design Agency - 2-Stage Gated with Brain & Vision QA",
+  "name": "AI Design Agency (Slack, 2-stage, Vision QA)",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "slack-design-agent",
-        "options": {}
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
       },
-      "id": "node-webhook",
-      "name": "Slack Webhook Listener",
+      "id": "n-slack-events-webhook",
+      "name": "Slack Events Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [200, 300]
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifies the Slack request signature and parses the body.\n// The build script replaces events with 'events' or 'interactivity'.\nconst MODE = 'events';\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst header = (n) => headers[n] || headers[n.toLowerCase()];\n\nlet raw = '';\ntry {\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  raw = buf.toString('utf8');\n} catch (e) {\n  raw = '';\n}\n\nlet valid = false;\nlet reason = '';\nconst secret = $env.SLACK_SIGNING_SECRET;\n\nif ($env.SLACK_SKIP_SIGNATURE_CHECK === 'true') {\n  valid = true;\n  reason = 'signature check skipped (dev mode)';\n} else if (!secret) {\n  reason = 'SLACK_SIGNING_SECRET is not set';\n} else {\n  const ts = header('x-slack-request-timestamp');\n  const sig = header('x-slack-signature');\n  if (!ts || !sig) {\n    reason = 'missing signature headers';\n  } else if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) {\n    reason = 'timestamp too old';\n  } else {\n    const expected = 'v0=' + crypto.createHmac('sha256', secret).update(`v0:${ts}:${raw}`).digest('hex');\n    const a = Buffer.from(expected);\n    const b = Buffer.from(String(sig));\n    valid = a.length === b.length && crypto.timingSafeEqual(a, b);\n    if (!valid) reason = 'signature mismatch';\n  }\n}\n\nlet body = {};\ntry {\n  if (raw) {\n    body = MODE === 'events' ? JSON.parse(raw) : JSON.parse(new URLSearchParams(raw).get('payload') || '{}');\n  } else {\n    const parsed = item.json.body || {};\n    body = MODE === 'events' ? parsed : JSON.parse(parsed.payload || '{}');\n  }\n} catch (e) {\n  valid = false;\n  reason = 'body could not be parsed';\n}\n\nif (MODE === 'events') {\n  const event = body.event || {};\n  const isRetry = header('x-slack-retry-num') !== undefined;\n  return [{\n    json: {\n      valid,\n      reason,\n      body,\n      is_challenge: body.type === 'url_verification',\n      challenge: body.challenge || '',\n      is_mention: body.type === 'event_callback' && event.type === 'app_mention' && !event.bot_id && !isRetry,\n    },\n  }];\n}\nreturn [{ json: { valid, reason, payload: body } }];\n"
+      },
+      "id": "n-verify-slack-signature",
+      "name": "Verify Slack Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
     },
     {
       "parameters": {
@@ -24,34 +43,44 @@
           "conditions": [
             {
               "id": "c1",
-              "leftValue": "={{ $json.body.challenge }}",
+              "leftValue": "={{ $json.valid }}",
               "rightValue": "",
               "operator": {
-                "type": "string",
-                "operation": "notEmpty"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "node-is-challenge",
-      "name": "Is Slack URL Verification?",
+      "id": "n-signature-valid",
+      "name": "Signature Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [420, 200]
+      "position": [
+        640,
+        300
+      ]
     },
     {
       "parameters": {
         "respondWith": "text",
-        "responseBody": "={{ $json.body.challenge }}",
-        "options": {}
+        "responseBody": "invalid signature",
+        "options": {
+          "responseCode": 401
+        }
       },
-      "id": "node-challenge-resp",
-      "name": "Respond to Slack Challenge",
+      "id": "n-respond-401",
+      "name": "Respond 401",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [640, 100]
+      "position": [
+        860,
+        520
+      ]
     },
     {
       "parameters": {
@@ -63,287 +92,1827 @@
           },
           "conditions": [
             {
-              "id": "c2",
-              "leftValue": "={{ $json.body.event.type }}",
-              "rightValue": "app_mention",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            },
-            {
-              "id": "c3",
-              "leftValue": "={{ $json.body.event.bot_id }}",
+              "id": "c1",
+              "leftValue": "={{ $json.is_challenge }}",
               "rightValue": "",
               "operator": {
-                "type": "string",
-                "operation": "empty"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             }
           ],
           "combinator": "and"
-        }
-      },
-      "id": "node-filter-user",
-      "name": "Filter Valid User Mention",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [640, 300]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://slack.com/api/chat.postMessage",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "Bearer {{ $env.SLACK_BOT_TOKEN }}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "channel",
-              "value": "={{ $('Slack Webhook Listener').item.json.body.event.channel }}"
-            },
-            {
-              "name": "thread_ts",
-              "value": "={{ $('Slack Webhook Listener').item.json.body.event.ts }}"
-            },
-            {
-              "name": "text",
-              "value": "🧠 *Accessing Client Knowledge Base & Past Approvals...*\nOur *Creative Director* is generating a single *Proof-of-Concept Draft (Post 1 of 10)*. Once inspected for text sharpness and brand compliance, it will be posted here for your approval before spending tokens on the remaining batch."
-            }
-          ]
         },
         "options": {}
       },
-      "id": "node-ack-slack",
-      "name": "Send Immediate Ack (Token Capping Notice)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [860, 300]
+      "id": "n-is-url-verification",
+      "name": "Is URL Verification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Load Client Brain (Guidelines, Golden Examples, Rejection History)\nconst userPrompt = $('Slack Webhook Listener').item.json.body.event.text;\n\nconst clientBrain = {\n  company_name: 'Apex Athletics',\n  color_palette: 'Primary Dark #0B0C10, Accent Cyan #66FCF1, Secondary #45A29E',\n  typography_rules: 'Futura Bold / ALL CAPS / Max 4 words in image',\n  banned_elements: ['No cheap supermarket sales badges', 'No AI deformed fingers/anatomy', 'No smiling stock photos'],\n  golden_past_examples: [\n    'Winter Endurance: Moody trail runner silhouette with cyan bold text DEFIANCE',\n    'Carbon Core: Macro fiber weave shot with white minimalist text UNBREAKABLE'\n  ],\n  rejection_history: [\n    'Rejected bright yellow 50% discount badge (looked cheap)',\n    'Rejected deformed hand holding water bottle'\n  ]\n};\n\nreturn [{\n  json: {\n    system_prompt: `You are the Executive Creative Director of an elite advertising agency.\nYou are working with client: ${clientBrain.company_name}.\n\nCLIENT BRAIN & KNOWLEDGE BASE:\n- Colors: ${clientBrain.color_palette}\n- Typography: ${clientBrain.typography_rules}\n- Banned Visual Elements: ${clientBrain.banned_elements.join(', ')}\n- Past Approved Work (Emulate This Style): ${clientBrain.golden_past_examples.join(' | ')}\n- Past Mistakes (NEVER Repeat These): ${clientBrain.rejection_history.join(' | ')}\n\nProduce a Proof-of-Concept Draft for Asset #1 of a 10-post campaign. Ensure text is at most 3-4 bold words for crisp rendering.\n\nRespond ONLY with a JSON object:\n{\n  \"theme\": \"High-performance endurance\",\n  \"headline_text\": \"LIMITLESS\",\n  \"art_direction_prompt\": \"Cinematic athletic editorial photography, silhouette runner at dawn, high contrast rim lighting, clean bold cyan text 'LIMITLESS' at top, 4:5 aspect ratio\",\n  \"copy_caption\": \"Your only competition is yesterday. The new Apex Core collection has arrived.\",\n  \"hashtags\": \"#ApexAthletics #HighPerformance #Relentless\"\n}`,\n    user_prompt: userPrompt,\n    slack_channel: $('Slack Webhook Listener').item.json.body.event.channel,\n    slack_thread_ts: $('Slack Webhook Listener').item.json.body.event.ts\n  }\n}];"
+        "respondWith": "text",
+        "responseBody": "={{ $json.challenge }}",
+        "options": {}
       },
-      "id": "node-brain-loader",
-      "name": "Load Client Brain & Build CD Prompt",
+      "id": "n-respond-challenge",
+      "name": "Respond Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "ok",
+        "options": {}
+      },
+      "id": "n-respond-200-ok",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.is_mention }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-valid-mention",
+      "name": "Valid Mention?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Immediate acknowledgement in the Slack thread.\nconst e = $input.first().json.body.event;\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: e.channel,\n      thread_ts: e.thread_ts || e.ts,\n      text: ':brain: Got it. Checking your brief against the client brain. If something is missing I will ask a few quick questions first, then I will make a single draft (Post 1) and wait for your approval before generating the rest.',\n    },\n  },\n}];\n"
+      },
+      "id": "n-build-ack",
+      "name": "Build Ack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1080, 300]
+      "position": [
+        1520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loads the client brain, applies learned rules, checks the daily image limit,\n// creates a job and prepares the intake (brief extraction) prompts.\n// The build script replaces {\"apex_athletics\": {\"client_id\": \"apex_athletics\", \"company_name\": \"Apex Athletics Global\", \"brand_guidelines\": {\"mission\": \"Empowering human physical potential through biomechanical sportswear\", \"tone_of_voice\": [\"Authoritative\", \"Minimalist\", \"High-Performance\", \"No-Nonsense\"], \"color_palette\": {\"primary_dark\": \"#0B0C10\", \"primary_accent\": \"#66FCF1\", \"secondary_cyan\": \"#45A29E\", \"neutral_light\": \"#C5C6C7\", \"pure_white\": \"#FFFFFF\"}, \"typography_rules\": {\"headline_font\": \"Futura Bold / Helvetica Neue Heavy\", \"casing\": \"ALL CAPS ONLY FOR HEADLINES\", \"max_text_characters\": 25}, \"banned_elements\": [\"No smiling stock models holding thumbs up\", \"No neon rainbow gradients (only cyan and charcoal)\", \"No generic gym dumbbell cliparts\", \"No blurry or warped letters\"]}, \"approved_past_work\": [{\"campaign_name\": \"Winter Endurance Series 2025\", \"visual_style_description\": \"Moody, overcast athletic trail running, sharp rim lighting on athlete silhouette, bold cyan text 'DEFIANCE' centered at the top\", \"headline\": \"DEFIANCE\", \"copy_snippet\": \"Cold is a condition. Commitment is a choice. #ApexAthletics\", \"why_approved\": \"Clean typographic hierarchy, high contrast, perfect alignment with dark aesthetic.\"}, {\"campaign_name\": \"Carbon Core Launch\", \"visual_style_description\": \"Macro close-up shot of technical weave fabric with subtle metallic sheen, stark black background, minimalist white branding\", \"headline\": \"UNBREAKABLE\", \"copy_snippet\": \"Engineered at the fiber level for zero friction.\", \"why_approved\": \"Focused on craftsmanship and technical innovation rather than hype.\"}], \"rejection_history\": [{\"date\": \"2025-11-14\", \"rejected_element\": \"Bright saturated yellow badge saying '50% OFF'\", \"client_feedback\": \"Looks like a cheap supermarket flyer. We never use bright yellow or tacky discount badges.\", \"corrective_rule\": \"NEVER use yellow, red discount badges, or cliparts. Discounts must be styled in sleek cyan and charcoal typography.\"}, {\"date\": \"2026-01-20\", \"rejected_element\": \"AI generated hand with 6 fingers holding water bottle\", \"client_feedback\": \"Obvious AI distortion in hands, embarrassing to post.\", \"corrective_rule\": \"Vision QA must flag any hand/finger deformities or blurred text before client preview.\"}], \"aliases\": [\"apex\", \"apex athletics\"], \"slack_channel_ids\": [], \"limits\": {\"max_images_per_day\": 40}, \"default_audience\": \"Athletes, fitness professionals and high performers aged 22-45\", \"requires_product_photos\": false}, \"maria_b_study\": {\"client_id\": \"maria_b_study\", \"company_name\": \"Maria.B. (study example)\", \"public_facts\": {\"founder\": \"Maria Butt\", \"founded\": \"1999, Lahore, Pakistan\", \"stores\": \"38 locations as of 2025\", \"product_lines\": [\"Lawn\", \"Linen\", \"Sateen\", \"Silk\", \"Eid Lawn\", \"Evening Wear\", \"Couture\", \"Bridals\", \"Mbroidered\", \"MPrints\", \"MBasics\", \"Casuals\", \"Mkids\", \"Jewellery\", \"Perfumes\"], \"known_for\": \"Embroidered and embellished collections for everyday, festive and bridal wear\", \"source\": \"https://en.wikipedia.org/wiki/Maria_B\"}, \"brand_guidelines\": {\"mission\": \"ASSUMED: Make Pakistani women feel luxurious and confident, from everyday lawn to bridal couture\", \"tone_of_voice\": [\"Elegant\", \"Confident\", \"Warm\", \"Celebratory\", \"Premium but not distant\"], \"color_palette\": {\"primary_hex\": \"#111111\", \"secondary_hex\": \"#B08D57\", \"accent_hex\": \"#7A1F3D\", \"background_hex\": \"#FAF7F2\"}, \"typography_rules\": {\"headline_font\": \"ASSUMED: high-contrast serif or refined sans, Latin script only (AI image models spell Urdu script badly)\", \"casing\": \"Title Case or lowercase for elegance, never shouting ALL CAPS\", \"max_text_characters\": 20}, \"banned_elements\": [\"No discount badges, red or yellow sale stickers, or clipart\", \"No AI-generated garments (customers expect the exact real product). Use real product photos, AI only for layout, background and copy\", \"No distorted hands, faces, or embroidery that looks melted\", \"No competitor brand names or lookalike logos\", \"No unverified claims such as 'best in Pakistan'\"]}, \"collection_context\": {\"ASSUMED_audience\": \"Women 20-45 in Pakistan and the diaspora (UK, US, UAE) shopping for lawn, festive, wedding and bridal\", \"ASSUMED_seasons\": [\"Summer lawn\", \"Eid festive\", \"Winter linen and velvet\", \"Wedding season\", \"Bridal couture\"], \"ASSUMED_social\": {\"instagram\": \"4:5 (1080x1350) for product and lookbook, 9:16 for Reels covers\", \"caption_structure\": \"1. Short elegant hook\\n2. 1-2 lines about fabric or embroidery\\n3. Clear CTA (shop now, visit store)\\n4. 6-8 hashtags\"}}, \"approved_past_work\": [], \"rejection_history\": [], \"_note\": \"STUDY DRAFT: public_facts come from Wikipedia. Colors, tone and banned elements are ASSUMED, not Maria B's official guidelines. approved_past_work and rejection_history are empty on purpose: fill them from the real client.\", \"aliases\": [\"maria b\", \"maria.b\", \"mariab\"], \"slack_channel_ids\": [], \"limits\": {\"max_images_per_day\": 40}, \"default_audience\": \"Women 20-45 in Pakistan and the diaspora shopping for lawn, festive, wedding and bridal wear\", \"requires_product_photos\": true}} and {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]}.\nconst BRAINS = {\"apex_athletics\": {\"client_id\": \"apex_athletics\", \"company_name\": \"Apex Athletics Global\", \"brand_guidelines\": {\"mission\": \"Empowering human physical potential through biomechanical sportswear\", \"tone_of_voice\": [\"Authoritative\", \"Minimalist\", \"High-Performance\", \"No-Nonsense\"], \"color_palette\": {\"primary_dark\": \"#0B0C10\", \"primary_accent\": \"#66FCF1\", \"secondary_cyan\": \"#45A29E\", \"neutral_light\": \"#C5C6C7\", \"pure_white\": \"#FFFFFF\"}, \"typography_rules\": {\"headline_font\": \"Futura Bold / Helvetica Neue Heavy\", \"casing\": \"ALL CAPS ONLY FOR HEADLINES\", \"max_text_characters\": 25}, \"banned_elements\": [\"No smiling stock models holding thumbs up\", \"No neon rainbow gradients (only cyan and charcoal)\", \"No generic gym dumbbell cliparts\", \"No blurry or warped letters\"]}, \"approved_past_work\": [{\"campaign_name\": \"Winter Endurance Series 2025\", \"visual_style_description\": \"Moody, overcast athletic trail running, sharp rim lighting on athlete silhouette, bold cyan text 'DEFIANCE' centered at the top\", \"headline\": \"DEFIANCE\", \"copy_snippet\": \"Cold is a condition. Commitment is a choice. #ApexAthletics\", \"why_approved\": \"Clean typographic hierarchy, high contrast, perfect alignment with dark aesthetic.\"}, {\"campaign_name\": \"Carbon Core Launch\", \"visual_style_description\": \"Macro close-up shot of technical weave fabric with subtle metallic sheen, stark black background, minimalist white branding\", \"headline\": \"UNBREAKABLE\", \"copy_snippet\": \"Engineered at the fiber level for zero friction.\", \"why_approved\": \"Focused on craftsmanship and technical innovation rather than hype.\"}], \"rejection_history\": [{\"date\": \"2025-11-14\", \"rejected_element\": \"Bright saturated yellow badge saying '50% OFF'\", \"client_feedback\": \"Looks like a cheap supermarket flyer. We never use bright yellow or tacky discount badges.\", \"corrective_rule\": \"NEVER use yellow, red discount badges, or cliparts. Discounts must be styled in sleek cyan and charcoal typography.\"}, {\"date\": \"2026-01-20\", \"rejected_element\": \"AI generated hand with 6 fingers holding water bottle\", \"client_feedback\": \"Obvious AI distortion in hands, embarrassing to post.\", \"corrective_rule\": \"Vision QA must flag any hand/finger deformities or blurred text before client preview.\"}], \"aliases\": [\"apex\", \"apex athletics\"], \"slack_channel_ids\": [], \"limits\": {\"max_images_per_day\": 40}, \"default_audience\": \"Athletes, fitness professionals and high performers aged 22-45\", \"requires_product_photos\": false}, \"maria_b_study\": {\"client_id\": \"maria_b_study\", \"company_name\": \"Maria.B. (study example)\", \"public_facts\": {\"founder\": \"Maria Butt\", \"founded\": \"1999, Lahore, Pakistan\", \"stores\": \"38 locations as of 2025\", \"product_lines\": [\"Lawn\", \"Linen\", \"Sateen\", \"Silk\", \"Eid Lawn\", \"Evening Wear\", \"Couture\", \"Bridals\", \"Mbroidered\", \"MPrints\", \"MBasics\", \"Casuals\", \"Mkids\", \"Jewellery\", \"Perfumes\"], \"known_for\": \"Embroidered and embellished collections for everyday, festive and bridal wear\", \"source\": \"https://en.wikipedia.org/wiki/Maria_B\"}, \"brand_guidelines\": {\"mission\": \"ASSUMED: Make Pakistani women feel luxurious and confident, from everyday lawn to bridal couture\", \"tone_of_voice\": [\"Elegant\", \"Confident\", \"Warm\", \"Celebratory\", \"Premium but not distant\"], \"color_palette\": {\"primary_hex\": \"#111111\", \"secondary_hex\": \"#B08D57\", \"accent_hex\": \"#7A1F3D\", \"background_hex\": \"#FAF7F2\"}, \"typography_rules\": {\"headline_font\": \"ASSUMED: high-contrast serif or refined sans, Latin script only (AI image models spell Urdu script badly)\", \"casing\": \"Title Case or lowercase for elegance, never shouting ALL CAPS\", \"max_text_characters\": 20}, \"banned_elements\": [\"No discount badges, red or yellow sale stickers, or clipart\", \"No AI-generated garments (customers expect the exact real product). Use real product photos, AI only for layout, background and copy\", \"No distorted hands, faces, or embroidery that looks melted\", \"No competitor brand names or lookalike logos\", \"No unverified claims such as 'best in Pakistan'\"]}, \"collection_context\": {\"ASSUMED_audience\": \"Women 20-45 in Pakistan and the diaspora (UK, US, UAE) shopping for lawn, festive, wedding and bridal\", \"ASSUMED_seasons\": [\"Summer lawn\", \"Eid festive\", \"Winter linen and velvet\", \"Wedding season\", \"Bridal couture\"], \"ASSUMED_social\": {\"instagram\": \"4:5 (1080x1350) for product and lookbook, 9:16 for Reels covers\", \"caption_structure\": \"1. Short elegant hook\\n2. 1-2 lines about fabric or embroidery\\n3. Clear CTA (shop now, visit store)\\n4. 6-8 hashtags\"}}, \"approved_past_work\": [], \"rejection_history\": [], \"_note\": \"STUDY DRAFT: public_facts come from Wikipedia. Colors, tone and banned elements are ASSUMED, not Maria B's official guidelines. approved_past_work and rejection_history are empty on purpose: fill them from the real client.\", \"aliases\": [\"maria b\", \"maria.b\", \"mariab\"], \"slack_channel_ids\": [], \"limits\": {\"max_images_per_day\": 40}, \"default_audience\": \"Women 20-45 in Pakistan and the diaspora shopping for lawn, festive, wedding and bridal wear\", \"requires_product_photos\": true}};\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\n\nconst e = $input.first().json.body.event;\nconst sd = $getWorkflowStaticData('global');\nsd.jobs = sd.jobs || {};\nsd.learned = sd.learned || {};\nsd.usage = sd.usage || {};\n\nconst now = Date.now();\nfor (const [k, j] of Object.entries(sd.jobs)) {\n  if (now - j.created > 14 * 86400 * 1000) delete sd.jobs[k];\n}\n\nlet text = (e.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();\nlet clientId = null;\nconst tag = text.match(/client:\\s*([a-z0-9_-]+)/i);\nif (tag) {\n  clientId = tag[1].toLowerCase();\n  text = text.replace(tag[0], '').trim();\n}\nconst skipIntake = /--quick\\b/i.test(text);\ntext = text.replace(/--quick\\b/gi, '').trim();\n\nconst ids = Object.keys(BRAINS);\nif (!clientId || !BRAINS[clientId]) {\n  const lower = text.toLowerCase();\n  clientId =\n    ids.find((id) => (BRAINS[id].slack_channel_ids || []).includes(e.channel)) ||\n    ids.find((id) => (BRAINS[id].aliases || []).some((a) => lower.includes(a.toLowerCase()))) ||\n    ($env.DEFAULT_CLIENT_ID && BRAINS[$env.DEFAULT_CLIENT_ID] ? $env.DEFAULT_CLIENT_ID : ids[0]);\n}\nconst brain = BRAINS[clientId];\nconst guide = brain.brand_guidelines || {};\nconst learned = sd.learned[clientId] || [];\n\nconst day = new Date().toISOString().slice(0, 10);\nconst limit = (brain.limits && brain.limits.max_images_per_day) || Number($env.DAILY_IMAGE_LIMIT) || 40;\nconst used = (sd.usage[clientId] && sd.usage[clientId][day]) || 0;\nconst withinLimit = used + 1 <= limit;\n\nconst banned = guide.banned_elements || [];\nconst rejections = []\n  .concat((brain.rejection_history || []).map((r) => `${r.rejected_element} -> rule: ${r.corrective_rule}`))\n  .concat(learned.map((r) => `${r.client_feedback} -> rule: ${r.corrective_rule}`));\nconst golden = (brain.approved_past_work || []).map(\n  (a) => `${a.campaign_name}: ${a.visual_style_description} | headline \"${a.headline}\"`\n);\nconst maxChars = (guide.typography_rules && guide.typography_rules.max_text_characters) || 25;\n\nconst brainPrompt = `You are the Executive Creative Director of an elite agency working for the client \"${brain.company_name}\".\n\nCLIENT BRAIN\nBrand guidelines (JSON): ${JSON.stringify(guide)}\nContext (JSON): ${JSON.stringify(brain.collection_context || brain.public_facts || {})}\nPast approved work to emulate: ${golden.length ? golden.join(' | ') : 'none yet'}\nMistakes to NEVER repeat: ${rejections.length ? rejections.join(' | ') : 'none yet'}\nHeadlines printed on images: maximum ${maxChars} characters, Latin script. Never use banned elements.`;\n\nconst intakeSystem = `You extract a social media design brief from a client's Slack message.\nOnly use what the message clearly states. Never guess. Use null for anything not stated.\nReturn ONLY JSON: {\"platform\": <id or null>, \"objective\": <id or null>, \"product_focus\": <string or null>, \"audience\": <string or null>, \"visual_style\": <string or null>, \"assets\": <id or null>}\nplatform ids: ${OPTIONS.platforms.map((p) => `${p.id} (${p.label})`).join('; ')}\nobjective ids: ${OPTIONS.objectives.map((o) => `${o.id} (${o.label})`).join('; ')}\nassets ids: will_attach (the message says real photos are attached or provided), none (the message says there are no photos)\nproduct_focus: the specific product, collection or offer. audience: who it is for. visual_style: the look or mood asked for.`;\n\nlet jobId = null;\nif (withinLimit) {\n  jobId = 'job_' + now.toString(36) + Math.random().toString(36).slice(2, 6);\n  sd.jobs[jobId] = {\n    client_id: clientId,\n    channel: e.channel,\n    thread_ts: e.thread_ts || e.ts,\n    request: text,\n    status: 'intake',\n    created: now,\n    revision: 0,\n    limit,\n    qa_rules: banned.join('; '),\n    qa_warnings: 0,\n    brain_prompt: brainPrompt,\n    requires_photos: !!brain.requires_product_photos,\n    default_audience: brain.default_audience || '',\n    brand_name: brain.company_name,\n  };\n}\n\nreturn [{\n  json: {\n    job_id: jobId,\n    client_id: clientId,\n    brand_name: brain.company_name,\n    channel: e.channel,\n    thread_ts: e.thread_ts || e.ts,\n    within_limit: withinLimit,\n    limit,\n    used,\n    skip_intake: skipIntake,\n    has_files: Array.isArray(e.files) && e.files.length > 0,\n    intake_system_prompt: intakeSystem,\n    intake_user_prompt: text || 'No details given.',\n  },\n}];\n"
+      },
+      "id": "n-load-brain-and-build-prompt",
+      "name": "Load Brain & Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.within_limit }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-within-daily-limit",
+      "name": "Within Daily Limit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tells the team the daily image limit was reached.\nconst c = $input.first().json;\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: c.channel,\n      thread_ts: c.thread_ts,\n      text: `:no_entry: Daily image limit reached for ${c.brand_name} (${c.used} of ${c.limit} images used today). Try again tomorrow or raise \"limits.max_images_per_day\" in the client brain.`,\n    },\n  },\n}];\n"
+      },
+      "id": "n-build-limit-message",
+      "name": "Build Limit Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        620
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.OPENAI_API_KEY }}"
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
             }
           ]
         },
+        "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": {{ JSON.stringify($json.system_prompt) }} },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify($json.user_prompt) }} }\n  ],\n  \"temperature\": 0.7\n}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', response_format: { type: 'json_object' }, temperature: 0, messages: [ { role: 'system', content: $json.intake_system_prompt }, { role: 'user', content: $json.intake_user_prompt } ] }) }}"
       },
-      "id": "node-cd-draft",
-      "name": "Creative Director (Draft #1 Plan)",
+      "id": "n-intake-evaluator",
+      "name": "Intake Evaluator",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1300, 300]
+      "position": [
+        1960,
+        440
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates the extracted brief in code (does not trust the model) and decides:\n// complete -> go straight to planning, or incomplete -> ask the client.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst ctx = $('Load Brain & Build Prompt').last().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[ctx.job_id];\nif (!job) throw new Error('Job not found: ' + ctx.job_id);\n\nlet x = {};\ntry {\n  x = JSON.parse($input.first().json.choices[0].message.content);\n} catch (err) {\n  x = {};\n}\nconst pick = (list, v) => (list.some((o) => o.id === v) ? v : null);\nconst clean = (s) =>\n  typeof s === 'string' && s.trim() && !/^(null|none|n\\/a|unknown|not stated)$/i.test(s.trim()) ? s.trim().slice(0, 300) : null;\n\nconst brief = {\n  platform: pick(OPTIONS.platforms, x.platform),\n  objective: pick(OPTIONS.objectives, x.objective),\n  product_focus: clean(x.product_focus),\n  audience: clean(x.audience),\n  visual_style: clean(x.visual_style),\n  assets: pick(OPTIONS.assets, x.assets),\n};\nif (ctx.has_files) brief.assets = 'will_attach';\n\nif (ctx.skip_intake) {\n  brief.platform = brief.platform || 'ig_feed_4x5';\n  brief.objective = brief.objective || 'brand_awareness';\n  brief.product_focus = brief.product_focus || job.request || 'the brand';\n  brief.assets = brief.assets || 'none';\n}\n\nconst missing = [];\nif (!brief.platform) missing.push('platform');\nif (!brief.objective) missing.push('objective');\nif (!brief.product_focus) missing.push('product_focus');\nif (job.requires_photos && !brief.assets) missing.push('assets');\n\nif (missing.length === 0) {\n  job.brief = brief;\n  job.status = 'planning';\n  return [{ json: { complete: true, job_id: ctx.job_id } }];\n}\n\njob.brief_draft = brief;\njob.status = 'awaiting_intake';\nreturn [{\n  json: { complete: false, job_id: ctx.job_id, channel: job.channel, thread_ts: job.thread_ts, brief, missing },\n}];\n"
+      },
+      "id": "n-parse-intake",
+      "name": "Parse Intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.complete }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-brief-complete",
+      "name": "Brief Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Posts the \"I need a few details\" message: what was understood, what is missing, and a button to open the form.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst i = $input.first().json;\nconst b = i.brief;\nconst label = (list, id) => (list.find((o) => o.id === id) || {}).label;\n\nconst rows = [\n  ['Where will it be posted (size)', label(OPTIONS.platforms, b.platform)],\n  ['Goal of the campaign', label(OPTIONS.objectives, b.objective)],\n  ['Product or collection', b.product_focus],\n  ['Target audience', b.audience],\n  ['Look and mood', b.visual_style],\n  ['Real product photos', label(OPTIONS.assets, b.assets)],\n];\nconst lines = rows.map(([name, value]) => (value ? `:white_check_mark: *${name}:* ${value}` : `:grey_question: *${name}:* not stated`));\n\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: i.channel,\n      thread_ts: i.thread_ts,\n      text: 'I need a few details before I design. Please answer the quick questions.',\n      blocks: [\n        {\n          type: 'section',\n          text: {\n            type: 'mrkdwn',\n            text: '*Before I design, I need a few details.* Answering them now means the first draft has the right size, goal and style, so you do not need to ask for changes later.',\n          },\n        },\n        { type: 'section', text: { type: 'mrkdwn', text: lines.join('\\n') } },\n        {\n          type: 'actions',\n          elements: [{\n            type: 'button',\n            style: 'primary',\n            text: { type: 'plain_text', text: 'Answer 6 quick questions' },\n            action_id: 'btn_intake_open',\n            value: i.job_id,\n          }],\n        },\n      ],\n    },\n  },\n}];\n"
+      },
+      "id": "n-build-intake-request",
+      "name": "Build Intake Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Creative Director prompt from the client brain plus the confirmed brief.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst TOTAL_POSTS = 10;\nconst i = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[i.job_id];\nif (!job || !job.brief) throw new Error('No brief saved for job ' + i.job_id);\n\nconst b = job.brief;\nconst find = (list, id) => list.find((o) => o.id === id) || list[0];\nconst platform = find(OPTIONS.platforms, b.platform);\nconst objective = find(OPTIONS.objectives, b.objective);\njob.aspect_ratio = platform.aspect;\njob.platform_label = platform.label;\n\nlet photoRule = '';\nif (job.requires_photos) {\n  photoRule =\n    b.assets === 'will_attach'\n      ? 'PRODUCT INTEGRITY: the client supplies real product photos. NEVER draw, redraw or change the garments or products. Design only the background, lighting, atmosphere and typography around a clean area where the real product will be placed.'\n      : 'PRODUCT INTEGRITY: no real photos were supplied. Do not depict specific garments or products in detail. Prefer fabric textures, embroidery close-ups, environments, abstract settings and typography.';\n}\n\nconst system_prompt = `${job.brain_prompt}\n\nCONFIRMED BRIEF (answered by the client)\n- Platform and size: ${platform.label}\n- Campaign goal: ${objective.label}\n- Product or collection focus: ${b.product_focus}\n- Target audience: ${b.audience || job.default_audience || 'the brand\\'s usual audience'}\n- Visual style: ${b.visual_style || 'follow the brand guidelines'}\n${photoRule}\n\nTASK\nPlan a ${TOTAL_POSTS}-post campaign for this brief. Each post needs a short headline printed on the image, a full image prompt, a caption written for the chosen platform and goal, and hashtags. Follow the client's caption structure and tone.\nEvery image prompt must be a complete prompt for a ${platform.ratio} image and must contain the exact headline text in quotes.\n\nReturn ONLY valid JSON with exactly this shape (no commentary):\n{\"campaign_theme\": \"<short theme>\", \"posts\": [{\"headline_text\": \"<text on image>\", \"art_direction_prompt\": \"<full image prompt>\", \"caption\": \"<caption>\", \"hashtags\": \"<hashtags>\"}]}\nThe \"posts\" array must contain exactly ${TOTAL_POSTS} items, ordered as a narrative arc, with Post 1 being the strongest hero post.`;\n\nreturn [{\n  json: {\n    job_id: i.job_id,\n    client_id: job.client_id,\n    system_prompt,\n    user_prompt: job.request || `Create a campaign for ${b.product_focus}.`,\n  },\n}];\n"
+      },
+      "id": "n-build-cd-prompt",
+      "name": "Build CD Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            }
+          ]
+        },
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', response_format: { type: 'json_object' }, temperature: 0.7, messages: [ { role: 'system', content: $json.system_prompt }, { role: 'user', content: $json.user_prompt } ] }) }}"
+      },
+      "id": "n-creative-director",
+      "name": "Creative Director",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2840,
+        360
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parses the Creative Director's 10-post plan, saves it on the job, and emits Post 1 as the draft.\nconst ctx = $('Build CD Prompt').last().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[ctx.job_id];\nif (!job) throw new Error('Job not found: ' + ctx.job_id);\n\nlet plan;\ntry {\n  plan = JSON.parse($input.first().json.choices[0].message.content);\n} catch (err) {\n  throw new Error('Creative Director returned invalid JSON: ' + err.message);\n}\nconst posts = (Array.isArray(plan.posts) ? plan.posts : []).filter(\n  (p) => p && p.headline_text && p.art_direction_prompt\n);\nif (!posts.length) throw new Error('Creative Director returned no usable posts');\n\nconst clean = posts.slice(0, 10).map((p, i) => {\n  const headline = String(p.headline_text).trim();\n  let art = String(p.art_direction_prompt).trim();\n  if (!art.includes(headline)) art += ` Text on the image reads exactly: \"${headline}\".`;\n  return {\n    index: i + 1,\n    headline_text: headline,\n    art_prompt: art,\n    caption: String(p.caption || '').trim(),\n    hashtags: String(p.hashtags || '').trim(),\n  };\n});\njob.plan = { theme: plan.campaign_theme || '', posts: clean };\njob.status = 'drafting';\n\nconst p = clean[0];\nreturn [{\n  json: {\n    job_id: ctx.job_id,\n    client_id: job.client_id,\n    mode: 'draft',\n    post_index: p.index,\n    total: clean.length,\n    headline: p.headline_text,\n    art_prompt: p.art_prompt,\n    caption: p.caption,\n    hashtags: p.hashtags,\n    channel: job.channel,\n    thread_ts: job.thread_ts,\n    attempt: 1,\n    max_retries: 2,\n    qa_rules: job.qa_rules,\n    qa_min_score: 80,\n  },\n}];\n"
+      },
+      "id": "n-parse-campaign-plan",
+      "name": "Parse Campaign Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3060,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.slack_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            }
+          ]
+        },
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.slack_payload) }}"
+      },
+      "id": "n-slack-notify",
+      "name": "Slack Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        1000
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-interactivity",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "n-slack-interactivity-webhook",
+      "name": "Slack Interactivity Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifies the Slack request signature and parses the body.\n// The build script replaces interactivity with 'events' or 'interactivity'.\nconst MODE = 'interactivity';\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst header = (n) => headers[n] || headers[n.toLowerCase()];\n\nlet raw = '';\ntry {\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  raw = buf.toString('utf8');\n} catch (e) {\n  raw = '';\n}\n\nlet valid = false;\nlet reason = '';\nconst secret = $env.SLACK_SIGNING_SECRET;\n\nif ($env.SLACK_SKIP_SIGNATURE_CHECK === 'true') {\n  valid = true;\n  reason = 'signature check skipped (dev mode)';\n} else if (!secret) {\n  reason = 'SLACK_SIGNING_SECRET is not set';\n} else {\n  const ts = header('x-slack-request-timestamp');\n  const sig = header('x-slack-signature');\n  if (!ts || !sig) {\n    reason = 'missing signature headers';\n  } else if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) {\n    reason = 'timestamp too old';\n  } else {\n    const expected = 'v0=' + crypto.createHmac('sha256', secret).update(`v0:${ts}:${raw}`).digest('hex');\n    const a = Buffer.from(expected);\n    const b = Buffer.from(String(sig));\n    valid = a.length === b.length && crypto.timingSafeEqual(a, b);\n    if (!valid) reason = 'signature mismatch';\n  }\n}\n\nlet body = {};\ntry {\n  if (raw) {\n    body = MODE === 'events' ? JSON.parse(raw) : JSON.parse(new URLSearchParams(raw).get('payload') || '{}');\n  } else {\n    const parsed = item.json.body || {};\n    body = MODE === 'events' ? parsed : JSON.parse(parsed.payload || '{}');\n  }\n} catch (e) {\n  valid = false;\n  reason = 'body could not be parsed';\n}\n\nif (MODE === 'events') {\n  const event = body.event || {};\n  const isRetry = header('x-slack-retry-num') !== undefined;\n  return [{\n    json: {\n      valid,\n      reason,\n      body,\n      is_challenge: body.type === 'url_verification',\n      challenge: body.challenge || '',\n      is_mention: body.type === 'event_callback' && event.type === 'app_mention' && !event.bot_id && !isRetry,\n    },\n  }];\n}\nreturn [{ json: { valid, reason, payload: body } }];\n"
+      },
+      "id": "n-verify-slack-signature-interactivity",
+      "name": "Verify Slack Signature (Interactivity)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-interactivity-signature-valid",
+      "name": "Interactivity Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {}
+      },
+      "id": "n-respond-200-interactivity",
+      "name": "Respond 200 (Interactivity)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turns a Slack interactivity payload (button click or modal submit) into a simple route.\nconst p = $input.first().json.payload || {};\nlet route = 'ignore';\nlet job_id = null;\nlet notes = '';\nlet brief = null;\n\nif (p.type === 'block_actions') {\n  const a = (p.actions || [])[0] || {};\n  job_id = a.value || null;\n  route = {\n    btn_approve_batch: 'approve',\n    btn_request_edit: 'edit_open',\n    btn_discard: 'discard',\n    btn_intake_open: 'intake_open',\n  }[a.action_id] || 'ignore';\n} else if (p.type === 'view_submission' && p.view && p.view.callback_id === 'edit_modal') {\n  route = 'edit_submit';\n  job_id = p.view.private_metadata || null;\n  const v = (p.view.state && p.view.state.values) || {};\n  notes = (v.notes_block && v.notes_block.notes_input && v.notes_block.notes_input.value) || '';\n} else if (p.type === 'view_submission' && p.view && p.view.callback_id === 'intake_modal') {\n  route = 'intake_submit';\n  job_id = p.view.private_metadata || null;\n  const v = (p.view.state && p.view.state.values) || {};\n  const val = (block) => {\n    const el = v[block] && v[block].value;\n    if (!el) return '';\n    return el.selected_option ? el.selected_option.value : el.value || '';\n  };\n  brief = {\n    platform: val('platform_block'),\n    objective: val('objective_block'),\n    product_focus: val('product_block').trim(),\n    audience: val('audience_block').trim(),\n    visual_style: val('style_block').trim(),\n    assets: val('assets_block'),\n  };\n}\n\nreturn [{\n  json: {\n    route,\n    job_id,\n    notes: notes.trim(),\n    brief,\n    trigger_id: p.trigger_id || null,\n    user_id: (p.user && p.user.id) || null,\n    channel: (p.channel && p.channel.id) || null,\n    message_ts: (p.container && p.container.message_ts) || null,\n  },\n}];\n"
+      },
+      "id": "n-route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "r-approve",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "approve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approve"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "r-discard",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "discard",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "discard"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "r-edit_open",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "edit_open",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "edit_open"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "r-edit_submit",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "edit_submit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "edit_submit"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "r-intake_open",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "intake_open",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "intake_open"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "r-intake_submit",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "intake_submit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "intake_submit"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n-action-router",
+      "name": "Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Opens the 6-question Slack form, pre-filled with everything already understood from the message.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst r = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[r.job_id];\nconst title = { type: 'plain_text', text: 'Quick brief' };\n\nif (!job || job.status !== 'awaiting_intake') {\n  return [{\n    json: {\n      slack_url: 'https://slack.com/api/views.open',\n      slack_payload: {\n        trigger_id: r.trigger_id,\n        view: {\n          type: 'modal',\n          title,\n          close: { type: 'plain_text', text: 'Close' },\n          blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'These questions were already answered, or the request is too old. Please mention the bot again to start a new campaign.' } }],\n        },\n      },\n    },\n  }];\n}\n\nconst b = job.brief_draft || {};\nconst opts = (list) => list.map((o) => ({ text: { type: 'plain_text', text: o.label.slice(0, 75) }, value: o.id }));\nconst select = (list, current, placeholder) => {\n  const el = { type: 'static_select', action_id: 'value', placeholder: { type: 'plain_text', text: placeholder }, options: opts(list) };\n  const found = list.find((o) => o.id === current);\n  if (found) el.initial_option = { text: { type: 'plain_text', text: found.label.slice(0, 75) }, value: found.id };\n  return el;\n};\nconst text = (current, placeholder, multiline) => {\n  const el = { type: 'plain_text_input', action_id: 'value', multiline: !!multiline, placeholder: { type: 'plain_text', text: placeholder } };\n  if (current) el.initial_value = current;\n  return el;\n};\nconst input = (id, label, element, optional) => ({\n  type: 'input',\n  block_id: id,\n  optional: !!optional,\n  label: { type: 'plain_text', text: label },\n  element,\n});\n\nconst view = {\n  type: 'modal',\n  callback_id: 'intake_modal',\n  private_metadata: r.job_id,\n  title,\n  submit: { type: 'plain_text', text: 'Start design' },\n  close: { type: 'plain_text', text: 'Cancel' },\n  blocks: [\n    input('platform_block', '1. Where will it be posted? (sets the size)', select(OPTIONS.platforms, b.platform, 'Choose a platform')),\n    input('objective_block', '2. What is the goal?', select(OPTIONS.objectives, b.objective, 'Choose a goal')),\n    input('product_block', '3. Which product or collection?', text(b.product_focus, 'e.g. Mbroidered winter collection, 3-piece suits', false)),\n    input('audience_block', '4. Who is it for? (optional)', text(b.audience, 'e.g. brides and wedding guests, women 25-40', false), true),\n    input('style_block', '5. Look and mood (optional)', text(b.visual_style, 'e.g. soft studio light, deep jewel tones, editorial', false), true),\n    input('assets_block', '6. Do you have real product photos?', select(OPTIONS.assets, b.assets, 'Choose one')),\n  ],\n};\n\nreturn [{\n  json: { slack_url: 'https://slack.com/api/views.open', slack_payload: { trigger_id: r.trigger_id, view } },\n}];\n"
+      },
+      "id": "n-build-intake-modal",
+      "name": "Build Intake Modal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Form submitted: validate the answers, save the brief on the job, and let planning start.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst r = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[r.job_id];\n\nconst blocked = (msg) => [{\n  json: {\n    blocked: true,\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: { channel: (job && job.channel) || r.channel, thread_ts: job ? job.thread_ts : undefined, text: msg },\n  },\n}];\n\nif (!job) return blocked(':warning: I could not find this request. Please mention the bot again to start a new campaign.');\nif (job.status !== 'awaiting_intake') return blocked(`:information_source: This brief was already submitted (status: ${job.status}).`);\n\nconst b = r.brief || {};\nconst valid = (list, v) => list.some((o) => o.id === v);\nif (!valid(OPTIONS.platforms, b.platform) || !valid(OPTIONS.objectives, b.objective) || !valid(OPTIONS.assets, b.assets) || !b.product_focus) {\n  return blocked(':warning: Some answers were missing. Please press the button again and fill every required question.');\n}\n\nconst day = new Date().toISOString().slice(0, 10);\nconst used = (sd.usage && sd.usage[job.client_id] && sd.usage[job.client_id][day]) || 0;\nif (used + 1 > job.limit) return blocked(`:no_entry: Daily image limit reached (${used} of ${job.limit}). Try again tomorrow.`);\n\njob.brief = {\n  platform: b.platform,\n  objective: b.objective,\n  product_focus: String(b.product_focus).trim().slice(0, 300),\n  audience: b.audience ? String(b.audience).trim().slice(0, 300) : null,\n  visual_style: b.visual_style ? String(b.visual_style).trim().slice(0, 300) : null,\n  assets: b.assets,\n};\njob.status = 'planning';\nreturn [{ json: { blocked: false, job_id: r.job_id } }];\n"
+      },
+      "id": "n-handle-intake-submit",
+      "name": "Handle Intake Submit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.blocked }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-intake-blocked",
+      "name": "Intake Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Confirms the brief back to the client so misunderstandings are caught before any image is made.\nconst OPTIONS = {\"platforms\": [{\"id\": \"ig_feed_4x5\", \"label\": \"Instagram Feed 4:5 (1080x1350)\", \"ratio\": \"4:5 portrait (1080x1350)\", \"aspect\": \"ASPECT_4_5\"}, {\"id\": \"square_1x1\", \"label\": \"Square 1:1 (Instagram, Facebook)\", \"ratio\": \"1:1 square (1080x1080)\", \"aspect\": \"ASPECT_1_1\"}, {\"id\": \"story_9x16\", \"label\": \"Story or Reel cover 9:16\", \"ratio\": \"9:16 vertical (1080x1920)\", \"aspect\": \"ASPECT_9_16\"}, {\"id\": \"landscape_16x9\", \"label\": \"Landscape 16:9 (Facebook, LinkedIn, X)\", \"ratio\": \"16:9 landscape\", \"aspect\": \"ASPECT_16_9\"}], \"objectives\": [{\"id\": \"brand_awareness\", \"label\": \"Brand awareness\"}, {\"id\": \"product_launch\", \"label\": \"Product or collection launch\"}, {\"id\": \"sale_promo\", \"label\": \"Sale or offer\"}, {\"id\": \"festival_event\", \"label\": \"Festival or event (Eid, wedding season)\"}, {\"id\": \"engagement\", \"label\": \"Engagement and community\"}], \"assets\": [{\"id\": \"will_attach\", \"label\": \"I will attach real product photos\"}, {\"id\": \"none\", \"label\": \"No photos, an AI-made image is fine\"}]};\nconst i = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[i.job_id];\nconst b = job.brief;\nconst label = (list, id) => (list.find((o) => o.id === id) || {}).label || id;\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: job.channel,\n      thread_ts: job.thread_ts,\n      text: `:memo: Thanks. Planning now: *${label(OPTIONS.platforms, b.platform)}*, goal: ${label(OPTIONS.objectives, b.objective)}, product: ${b.product_focus}. I will send one draft for your approval first.`,\n    },\n  },\n}];\n"
+      },
+      "id": "n-build-intake-thanks",
+      "name": "Build Intake Thanks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Approve button: validates the job and queues posts 2..N for the pipeline.\nconst r = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[r.job_id];\n\nconst blocked = (msg) => [{\n  json: {\n    blocked: true,\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: (job && job.channel) || r.channel,\n      thread_ts: job ? job.thread_ts : undefined,\n      text: msg,\n    },\n  },\n}];\n\nif (!job || !job.plan) return blocked(':warning: I could not find this draft. It may be older than 14 days or the workflow was restarted. Please ask for a new campaign.');\nif (job.status !== 'awaiting_review') return blocked(`:information_source: This draft was already handled (status: ${job.status}).`);\n\nconst day = new Date().toISOString().slice(0, 10);\nconst used = (sd.usage && sd.usage[job.client_id] && sd.usage[job.client_id][day]) || 0;\nconst needed = job.plan.posts.length - 1;\nif (used + needed > job.limit) {\n  return blocked(`:no_entry: Not enough daily image budget left (${used} of ${job.limit} used, ${needed} needed). Try again tomorrow or raise the limit in the client brain.`);\n}\n\njob.status = 'generating';\njob.card_channel = r.channel || job.card_channel;\njob.card_ts = r.message_ts || job.card_ts;\n\nreturn job.plan.posts.slice(1).map((p) => ({\n  json: {\n    blocked: false,\n    job_id: r.job_id,\n    client_id: job.client_id,\n    mode: 'batch',\n    post_index: p.index,\n    total: job.plan.posts.length,\n    headline: p.headline_text,\n    art_prompt: p.art_prompt,\n    caption: p.caption,\n    hashtags: p.hashtags,\n    channel: job.channel,\n    thread_ts: job.thread_ts,\n    attempt: 1,\n    max_retries: 2,\n    qa_rules: job.qa_rules,\n    qa_min_score: 80,\n    card_channel: job.card_channel,\n    card_ts: job.card_ts,\n    approved_by: r.user_id,\n  },\n}));\n"
+      },
+      "id": "n-handle-approve",
+      "name": "Handle Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Discard button: marks the job discarded and replaces the card so the buttons disappear.\nconst r = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[r.job_id];\nif (job) job.status = 'discarded';\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.update',\n    slack_payload: {\n      channel: r.channel,\n      ts: r.message_ts,\n      text: 'Draft discarded',\n      blocks: [{\n        type: 'section',\n        text: { type: 'mrkdwn', text: `:x: Draft discarded by <@${r.user_id}>. No more images will be generated for this job.` },\n      }],\n    },\n  },\n}];\n"
+      },
+      "id": "n-handle-discard",
+      "name": "Handle Discard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Request Changes button: opens a Slack modal asking what should change.\nconst r = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[r.job_id];\nconst title = { type: 'plain_text', text: 'Request changes' };\n\nlet view;\nif (!job || job.status !== 'awaiting_review') {\n  view = {\n    type: 'modal',\n    title,\n    close: { type: 'plain_text', text: 'Close' },\n    blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'This draft is no longer waiting for review.' } }],\n  };\n} else {\n  job.card_channel = r.channel;\n  job.card_ts = r.message_ts;\n  view = {\n    type: 'modal',\n    callback_id: 'edit_modal',\n    private_metadata: r.job_id,\n    title,\n    submit: { type: 'plain_text', text: 'Regenerate' },\n    close: { type: 'plain_text', text: 'Cancel' },\n    blocks: [{\n      type: 'input',\n      block_id: 'notes_block',\n      label: { type: 'plain_text', text: 'What should change?' },\n      element: {\n        type: 'plain_text_input',\n        action_id: 'notes_input',\n        multiline: true,\n        placeholder: { type: 'plain_text', text: 'e.g. softer lighting, show more embroidery detail, move the text higher' },\n      },\n    }],\n  };\n}\n\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/views.open',\n    slack_payload: { trigger_id: r.trigger_id, view },\n  },\n}];\n"
+      },
+      "id": "n-build-edit-modal",
+      "name": "Build Edit Modal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Modal submit: saves the feedback as a learned rule for this client and queues a revised Post 1.\nconst r = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[r.job_id];\n\nconst blocked = (msg) => [{\n  json: {\n    blocked: true,\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: { channel: (job && job.channel) || r.channel, thread_ts: job ? job.thread_ts : undefined, text: msg },\n  },\n}];\n\nif (!job || !job.plan) return blocked(':warning: I could not find this draft. Please ask for a new campaign.');\nif (job.status !== 'awaiting_review') return blocked(`:information_source: This draft was already handled (status: ${job.status}).`);\nif (!r.notes) return blocked(':information_source: No change notes were provided, so nothing was regenerated.');\n\nconst day = new Date().toISOString().slice(0, 10);\nconst used = (sd.usage && sd.usage[job.client_id] && sd.usage[job.client_id][day]) || 0;\nif (used + 1 > job.limit) return blocked(`:no_entry: Daily image limit reached (${used} of ${job.limit}).`);\n\nsd.learned = sd.learned || {};\nsd.learned[job.client_id] = sd.learned[job.client_id] || [];\nsd.learned[job.client_id].push({\n  date: new Date().toISOString().slice(0, 10),\n  rejected_element: `Draft revision request (${r.job_id})`,\n  client_feedback: r.notes,\n  corrective_rule: r.notes,\n});\nif (sd.learned[job.client_id].length > 20) sd.learned[job.client_id].shift();\n\njob.revision = (job.revision || 0) + 1;\njob.status = 'revising';\nconst p = job.plan.posts[0];\n\nreturn [{\n  json: {\n    blocked: false,\n    job_id: r.job_id,\n    client_id: job.client_id,\n    mode: 'draft',\n    post_index: p.index,\n    total: job.plan.posts.length,\n    headline: p.headline_text,\n    art_prompt: `${p.art_prompt} Client revision notes (must follow): ${r.notes}`,\n    caption: p.caption,\n    hashtags: p.hashtags,\n    channel: job.channel,\n    thread_ts: job.thread_ts,\n    attempt: 1,\n    max_retries: 2,\n    qa_rules: job.qa_rules,\n    qa_min_score: 80,\n    revision_notes: r.notes,\n    card_channel: job.card_channel,\n    card_ts: job.card_ts,\n  },\n}];\n"
+      },
+      "id": "n-handle-edit-submit",
+      "name": "Handle Edit Submit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.blocked }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-action-blocked",
+      "name": "Action Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One Slack notice per approve or revision (even when several items are queued).\nconst s = $input.first().json;\nif (s.mode === 'batch') {\n  return [{\n    json: {\n      slack_url: 'https://slack.com/api/chat.update',\n      slack_payload: {\n        channel: s.card_channel,\n        ts: s.card_ts,\n        text: 'Approved, generating the rest of the campaign',\n        blocks: [{\n          type: 'section',\n          text: { type: 'mrkdwn', text: `:white_check_mark: Approved by <@${s.approved_by}>. Generating posts 2 to ${s.total} now. Each image is checked before it is posted.` },\n        }],\n      },\n    },\n  }];\n}\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: s.channel,\n      thread_ts: s.thread_ts,\n      text: `:arrows_counterclockwise: Regenerating the draft with your notes: _${s.revision_notes}_`,\n    },\n  },\n}];\n"
+      },
+      "id": "n-build-progress-notice",
+      "name": "Build Progress Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "n-post-queue-loop",
+      "name": "Post Queue Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2400,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Single entry point for rendering (first attempt and QA retries both come through here).\n// The image size comes from the confirmed brief saved on the job.\nconst s = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[s.job_id];\nreturn [{\n  json: {\n    ...s,\n    base_art_prompt: s.base_art_prompt || s.art_prompt,\n    aspect_ratio: (job && job.aspect_ratio) || 'ASPECT_4_5',\n  },\n}];\n"
+      },
+      "id": "n-render-input",
+      "name": "Render Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        700
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.ideogram.ai/generate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Api-Key",
               "value": "={{ $env.IDEOGRAM_API_KEY }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
             }
           ]
         },
+        "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"image_request\": {\n    \"prompt\": {{ JSON.stringify(JSON.parse($json.choices[0].message.content).art_direction_prompt) }},\n    \"aspect_ratio\": \"ASPECT_4_5\",\n    \"model\": \"V_2\",\n    \"magic_prompt_option\": \"AUTO\"\n  }\n}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ image_request: { prompt: $json.art_prompt, aspect_ratio: $json.aspect_ratio, model: 'V_2', magic_prompt_option: 'OFF' } }) }}"
       },
-      "id": "node-render-draft",
-      "name": "Render Draft Image (Ideogram v2)",
+      "id": "n-render-image-ideogram-v2",
+      "name": "Render Image (Ideogram v2)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1520, 300]
+      "position": [
+        2840,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads the Ideogram result, counts usage, and prepares the Vision QA prompt.\nconst state = $('Render Input').last().json;\nconst res = $input.first().json;\nconst url = res && res.data && res.data[0] && res.data[0].url;\nif (!url) throw new Error('Ideogram returned no image: ' + JSON.stringify(res).slice(0, 300));\n\nconst sd = $getWorkflowStaticData('global');\nsd.usage = sd.usage || {};\nconst day = new Date().toISOString().slice(0, 10);\nsd.usage[state.client_id] = sd.usage[state.client_id] || {};\nsd.usage[state.client_id][day] = (sd.usage[state.client_id][day] || 0) + 1;\nfor (const d of Object.keys(sd.usage[state.client_id])) {\n  if (d < new Date(Date.now() - 30 * 86400 * 1000).toISOString().slice(0, 10)) delete sd.usage[state.client_id][d];\n}\n\nconst qa_system_prompt = `You are a strict Vision QA inspector for advertising images.\nExpected headline text: \"${state.headline}\". Read the text on the image and compare it character by character.\nClient banned elements: ${state.qa_rules || 'none'}.\nCheck: (1) the headline is spelled exactly, (2) text is sharp and legible, (3) no distorted hands, faces, anatomy, fabric or embroidery, (4) none of the banned elements appear, (5) the look fits a premium brand.\nReturn ONLY JSON: {\"detected_text\": \"<all text you can read on the image>\", \"legibility_score\": <0-100>, \"is_blurry\": <bool>, \"has_distortion\": <bool>, \"violates_banned_elements\": <bool>, \"pass\": <bool>, \"critique\": \"<specific, fixable problems>\"}`;\n\nreturn [{ json: { ...state, image_url: url, qa_system_prompt } }];\n"
+      },
+      "id": "n-collect-render-result",
+      "name": "Collect Render Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3060,
+        700
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.OPENAI_API_KEY }}"
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
             }
           ]
         },
+        "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an elite Vision QA Inspector. Inspect this generated asset. Intended Headline: 'LIMITLESS'. Check for blurry text, misspellings, anatomical distortions, and brand alignment. Return JSON: { pass: boolean, legibility_score: number (0-100), detected_text: string, is_blurry: boolean, critique: string }\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": [\n        { \"type\": \"text\", \"text\": \"Inspect this proof-of-concept draft image:\" },\n        { \"type\": \"image_url\", \"image_url\": { \"url\": {{ JSON.stringify($json.data[0].url) }} } }\n      ]\n    }\n  ]\n}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', response_format: { type: 'json_object' }, temperature: 0, messages: [ { role: 'system', content: $json.qa_system_prompt }, { role: 'user', content: [ { type: 'text', text: 'Inspect this image.' }, { type: 'image_url', image_url: { url: $json.image_url } } ] } ] }) }}"
       },
-      "id": "node-vision-qa",
-      "name": "Vision QA Inspector (GPT-4o Vision)",
+      "id": "n-vision-qa-inspector",
+      "name": "Vision QA Inspector",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1740, 300]
+      "position": [
+        3280,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decides pass/fail from the REAL Vision QA result. Spelling is checked here in code, not trusted to the model.\nconst state = $('Collect Render Result').last().json;\nlet qa = {};\ntry {\n  qa = JSON.parse($input.first().json.choices[0].message.content);\n} catch (err) {\n  qa = { parse_error: true, critique: 'QA response was not valid JSON' };\n}\n\nconst norm = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9؀-ۿ]/g, '');\nconst want = norm(state.headline);\nconst got = norm(qa.detected_text);\nconst score = Number(qa.legibility_score) || 0;\n\nconst problems = [];\nif (qa.parse_error) problems.push(qa.critique);\nif (!want || !got.includes(want)) {\n  problems.push(`Headline must read exactly \"${state.headline}\" but the image reads \"${qa.detected_text || ''}\"`);\n}\nif (score < state.qa_min_score) problems.push(`Legibility score ${score} is below ${state.qa_min_score}`);\nif (qa.is_blurry) problems.push('Text or image is blurry');\nif (qa.has_distortion) problems.push('Distorted hands, faces, fabric or embroidery');\nif (qa.violates_banned_elements) problems.push('Contains a banned element');\nif (qa.pass === false && qa.critique && problems.length === 0) problems.push(qa.critique);\n\nconst pass = problems.length === 0;\nconst canRetry = state.attempt <= state.max_retries;\n\nreturn [{\n  json: {\n    ...state,\n    qa: { pass, score, detected_text: qa.detected_text || '', problems, critique: qa.critique || '' },\n    qa_pass: pass,\n    proceed: pass || !canRetry,\n  },\n}];\n"
+      },
+      "id": "n-evaluate-qa",
+      "name": "Evaluate QA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3500,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.proceed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-qa-ok-or-out-of-retries",
+      "name": "QA OK or Out of Retries?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3720,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// QA failed and retries remain: add the QA feedback to the prompt and render again.\nconst s = $input.first().json;\nconst fix = s.qa.problems.join('; ');\nreturn [{\n  json: {\n    job_id: s.job_id,\n    client_id: s.client_id,\n    mode: s.mode,\n    post_index: s.post_index,\n    total: s.total,\n    headline: s.headline,\n    caption: s.caption,\n    hashtags: s.hashtags,\n    channel: s.channel,\n    thread_ts: s.thread_ts,\n    max_retries: s.max_retries,\n    qa_rules: s.qa_rules,\n    qa_min_score: s.qa_min_score,\n    card_channel: s.card_channel,\n    card_ts: s.card_ts,\n    approved_by: s.approved_by,\n    revision_notes: s.revision_notes,\n    base_art_prompt: s.base_art_prompt,\n    attempt: s.attempt + 1,\n    art_prompt: `${s.base_art_prompt} IMPORTANT corrections from the previous attempt: ${fix}. The text must be spelled exactly \"${s.headline}\".`,\n  },\n}];\n"
+      },
+      "id": "n-build-retry-prompt",
+      "name": "Build Retry Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3720,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "n-download-image",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3940,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Computes the file size and name needed by Slack's external upload API.\nconst state = $('Evaluate QA').last().json;\nconst input = $input.first();\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst mime = (input.binary && input.binary.data && input.binary.data.mimeType) || 'image/png';\nconst ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';\nconst filename = `${state.client_id}-${state.job_id}-post${state.post_index}.${ext}`;\nreturn [{ json: { ...state, filename, file_length: buf.length } }];\n"
+      },
+      "id": "n-prepare-slack-upload",
+      "name": "Prepare Slack Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        700
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://slack.com/api/chat.postMessage",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://slack.com/api/files.getUploadURLExternal",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.SLACK_BOT_TOKEN }}"
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
             }
           ]
         },
+        "options": {},
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"channel\": {{ JSON.stringify($('Load Client Brain & Build CD Prompt').item.json.slack_channel) }},\n  \"thread_ts\": {{ JSON.stringify($('Load Client Brain & Build CD Prompt').item.json.slack_thread_ts) }},\n  \"text\": \"🎨 Proof-of-Concept Draft Ready for Review!\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"🎨 Proof-of-Concept Draft (Post 1 of 10)\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Automated Vision QA Status:* 🟢 *PASSED* (Legibility Score: 92/100, Typography Verified Sharp)\"\n        }\n      ]\n    },\n    {\n      \"type\": \"image\",\n      \"image_url\": {{ JSON.stringify($('Render Draft Image (Ideogram v2)').item.json.data[0].url) }},\n      \"alt_text\": \"Draft Asset #1\"\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*Proposed Caption:*\\nPush beyond your limits. The Carbon Core series is engineered for zero friction.\\n\\n*Hashtags:* #ApexAthletics #DefyLimits\"\n      }\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"✅ Approve & Generate Full 10-Post Batch\"\n          },\n          \"style\": \"primary\",\n          \"action_id\": \"btn_approve_batch\",\n          \"value\": \"approve_all\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"🔄 Request Edit\"\n          },\n          \"action_id\": \"btn_request_edit\",\n          \"value\": \"request_edit\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"❌ Discard & Abort\"\n          },\n          \"style\": \"danger\",\n          \"action_id\": \"btn_discard\",\n          \"value\": \"discard\"\n        }\n      ]\n    }\n  ]\n}",
-        "options": {}
+        "contentType": "form-urlencoded",
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filename",
+              "value": "={{ $json.filename }}"
+            },
+            {
+              "name": "length",
+              "value": "={{ $json.file_length }}"
+            }
+          ]
+        }
       },
-      "id": "node-post-hitl-card",
-      "name": "Post Interactive Review Card to Slack",
+      "id": "n-slack-get-upload-url",
+      "name": "Slack: Get Upload URL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1960, 300]
+      "position": [
+        4380,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Re-attaches the downloaded image to the item together with Slack's upload URL.\nconst state = $('Prepare Slack Upload').last().json;\nconst r = $input.first().json;\nif (!r.ok) throw new Error('Slack files.getUploadURLExternal failed: ' + (r.error || JSON.stringify(r)));\nreturn [{\n  json: { ...state, upload_url: r.upload_url, file_id: r.file_id },\n  binary: $('Download Image').last().binary,\n}];\n"
+      },
+      "id": "n-attach-image-and-upload-url",
+      "name": "Attach Image & Upload URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4600,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.upload_url }}",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "n-slack-upload-file",
+      "name": "Slack: Upload File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4820,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/files.completeUploadExternal",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            }
+          ]
+        },
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ files: [ { id: $('Attach Image & Upload URL').last().json.file_id, title: $('Attach Image & Upload URL').last().json.headline } ], channel_id: $('Attach Image & Upload URL').last().json.channel, thread_ts: $('Attach Image & Upload URL').last().json.thread_ts, initial_comment: '*Post ' + $('Attach Image & Upload URL').last().json.post_index + ' of ' + $('Attach Image & Upload URL').last().json.total + '*' }) }}"
+      },
+      "id": "n-slack-complete-upload",
+      "name": "Slack: Complete Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5040,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Slack message for a finished image: a review card (draft) or a caption message (batch).\nconst s = $('Attach Image & Upload URL').last().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[s.job_id];\n\nconst qaLine = s.qa.pass\n  ? `:large_green_circle: *Vision QA passed* | legibility ${s.qa.score}/100 | text read: \"${s.qa.detected_text}\"`\n  : `:large_orange_circle: *Vision QA did not fully pass after ${s.attempt} attempt(s):* ${s.qa.problems.join('; ')}`;\nif (!s.qa.pass && job) job.qa_warnings = (job.qa_warnings || 0) + 1;\n\nconst captionText = `${s.caption}\\n\\n${s.hashtags}`.trim();\nlet payload;\n\nif (s.mode === 'draft') {\n  if (job) {\n    job.status = 'awaiting_review';\n    job.draft = { headline: s.headline, post_index: s.post_index, attempt: s.attempt, qa_pass: s.qa.pass };\n  }\n  const title = `Draft: Post ${s.post_index} of ${s.total}` + (job && job.revision ? ` (revision ${job.revision})` : '');\n  payload = {\n    channel: s.channel,\n    thread_ts: s.thread_ts,\n    text: `${title} is ready for review`,\n    blocks: [\n      { type: 'header', text: { type: 'plain_text', text: title.slice(0, 150) } },\n      { type: 'context', elements: [{ type: 'mrkdwn', text: qaLine.slice(0, 2900) }] },\n      { type: 'section', text: { type: 'mrkdwn', text: `*Headline:* ${s.headline}\\n*Proposed caption:*\\n${captionText}`.slice(0, 2900) } },\n      {\n        type: 'actions',\n        elements: [\n          { type: 'button', text: { type: 'plain_text', text: `Approve and generate ${Math.max(s.total - 1, 0)} more posts` }, style: 'primary', action_id: 'btn_approve_batch', value: s.job_id },\n          { type: 'button', text: { type: 'plain_text', text: 'Request changes' }, action_id: 'btn_request_edit', value: s.job_id },\n          { type: 'button', text: { type: 'plain_text', text: 'Discard' }, style: 'danger', action_id: 'btn_discard', value: s.job_id },\n        ],\n      },\n    ],\n  };\n} else {\n  payload = {\n    channel: s.channel,\n    thread_ts: s.thread_ts,\n    text: `*Post ${s.post_index} of ${s.total}: ${s.headline}*\\n${captionText}\\n${qaLine}`.slice(0, 3900),\n  };\n}\n\nreturn [{\n  json: {\n    mode: s.mode,\n    job_id: s.job_id,\n    channel: s.channel,\n    thread_ts: s.thread_ts,\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: payload,\n  },\n}];\n"
+      },
+      "id": "n-build-delivery-message",
+      "name": "Build Delivery Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5260,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.slack_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            }
+          ]
+        },
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.slack_payload) }}"
+      },
+      "id": "n-slack-post-pipeline",
+      "name": "Slack Post (Pipeline)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5480,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Build Delivery Message').last().json.mode === 'batch' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-is-batch-item",
+      "name": "Is Batch Item?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5700,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final message after all batch posts were delivered.\nconst s = $('Build Delivery Message').last().json;\nconst sd = $getWorkflowStaticData('global');\nconst job = sd.jobs && sd.jobs[s.job_id];\nlet warn = '';\nif (job) {\n  job.status = 'complete';\n  if (job.qa_warnings) warn = ` ${job.qa_warnings} image(s) did not fully pass Vision QA, please review them.`;\n}\nreturn [{\n  json: {\n    slack_url: 'https://slack.com/api/chat.postMessage',\n    slack_payload: {\n      channel: s.channel,\n      thread_ts: s.thread_ts,\n      text: `:white_check_mark: Campaign complete. All images are saved in this thread.${warn}`,\n    },\n  },\n}];\n"
+      },
+      "id": "n-build-batch-complete",
+      "name": "Build Batch Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        500
+      ]
     }
   ],
   "connections": {
-    "Slack Webhook Listener": {
+    "Slack Events Webhook": {
       "main": [
         [
           {
-            "node": "Is Slack URL Verification?",
+            "node": "Verify Slack Signature",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is Slack URL Verification?": {
+    "Verify Slack Signature": {
       "main": [
         [
           {
-            "node": "Respond to Slack Challenge",
+            "node": "Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Is URL Verification?",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Filter Valid User Mention",
+            "node": "Respond 401",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Filter Valid User Mention": {
+    "Is URL Verification?": {
       "main": [
         [
           {
-            "node": "Send Immediate Ack (Token Capping Notice)",
+            "node": "Respond Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 200 OK",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send Immediate Ack (Token Capping Notice)": {
+    "Respond 200 OK": {
       "main": [
         [
           {
-            "node": "Load Client Brain & Build CD Prompt",
+            "node": "Valid Mention?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Load Client Brain & Build CD Prompt": {
+    "Valid Mention?": {
       "main": [
         [
           {
-            "node": "Creative Director (Draft #1 Plan)",
+            "node": "Build Ack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Brain & Build Prompt",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Creative Director (Draft #1 Plan)": {
+    "Build Ack": {
       "main": [
         [
           {
-            "node": "Render Draft Image (Ideogram v2)",
+            "node": "Slack Notify",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Render Draft Image (Ideogram v2)": {
+    "Load Brain & Build Prompt": {
       "main": [
         [
           {
-            "node": "Vision QA Inspector (GPT-4o Vision)",
+            "node": "Within Daily Limit?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Vision QA Inspector (GPT-4o Vision)": {
+    "Within Daily Limit?": {
       "main": [
         [
           {
-            "node": "Post Interactive Review Card to Slack",
+            "node": "Intake Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Limit Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Limit Message": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intake Evaluator": {
+      "main": [
+        [
+          {
+            "node": "Parse Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Intake": {
+      "main": [
+        [
+          {
+            "node": "Brief Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brief Complete?": {
+      "main": [
+        [
+          {
+            "node": "Build CD Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Intake Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Intake Request": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CD Prompt": {
+      "main": [
+        [
+          {
+            "node": "Creative Director",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Creative Director": {
+      "main": [
+        [
+          {
+            "node": "Parse Campaign Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Interactivity Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Slack Signature (Interactivity)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Slack Signature (Interactivity)": {
+      "main": [
+        [
+          {
+            "node": "Interactivity Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interactivity Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 (Interactivity)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200 (Interactivity)": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "Action Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Router": {
+      "main": [
+        [
+          {
+            "node": "Handle Approve",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Discard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Edit Modal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Edit Submit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Intake Modal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Intake Submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Intake Modal": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Intake Submit": {
+      "main": [
+        [
+          {
+            "node": "Intake Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intake Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build CD Prompt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Intake Thanks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Intake Thanks": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Discard": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Edit Modal": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Approve": {
+      "main": [
+        [
+          {
+            "node": "Action Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Edit Submit": {
+      "main": [
+        [
+          {
+            "node": "Action Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post Queue Loop",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Progress Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Progress Notice": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Campaign Plan": {
+      "main": [
+        [
+          {
+            "node": "Post Queue Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Queue Loop": {
+      "main": [
+        [
+          {
+            "node": "Build Batch Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Render Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Batch Complete": {
+      "main": [
+        [
+          {
+            "node": "Slack Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Input": {
+      "main": [
+        [
+          {
+            "node": "Render Image (Ideogram v2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Image (Ideogram v2)": {
+      "main": [
+        [
+          {
+            "node": "Collect Render Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Render Result": {
+      "main": [
+        [
+          {
+            "node": "Vision QA Inspector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision QA Inspector": {
+      "main": [
+        [
+          {
+            "node": "Evaluate QA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate QA": {
+      "main": [
+        [
+          {
+            "node": "QA OK or Out of Retries?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QA OK or Out of Retries?": {
+      "main": [
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Retry Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Retry Prompt": {
+      "main": [
+        [
+          {
+            "node": "Render Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Prepare Slack Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Slack Upload": {
+      "main": [
+        [
+          {
+            "node": "Slack: Get Upload URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Get Upload URL": {
+      "main": [
+        [
+          {
+            "node": "Attach Image & Upload URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Image & Upload URL": {
+      "main": [
+        [
+          {
+            "node": "Slack: Upload File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Upload File": {
+      "main": [
+        [
+          {
+            "node": "Slack: Complete Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Complete Upload": {
+      "main": [
+        [
+          {
+            "node": "Build Delivery Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Delivery Message": {
+      "main": [
+        [
+          {
+            "node": "Slack Post (Pipeline)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Post (Pipeline)": {
+      "main": [
+        [
+          {
+            "node": "Is Batch Item?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Batch Item?": {
+      "main": [
+        [
+          {
+            "node": "Post Queue Loop",
             "type": "main",
             "index": 0
           }
         ]
       ]
     }
-  }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
 }

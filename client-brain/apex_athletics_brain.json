@@ -3,7 +3,12 @@
   "company_name": "Apex Athletics Global",
   "brand_guidelines": {
     "mission": "Empowering human physical potential through biomechanical sportswear",
-    "tone_of_voice": ["Authoritative", "Minimalist", "High-Performance", "No-Nonsense"],
+    "tone_of_voice": [
+      "Authoritative",
+      "Minimalist",
+      "High-Performance",
+      "No-Nonsense"
+    ],
     "color_palette": {
       "primary_dark": "#0B0C10",
       "primary_accent": "#66FCF1",
@@ -52,5 +57,15 @@
       "client_feedback": "Obvious AI distortion in hands, embarrassing to post.",
       "corrective_rule": "Vision QA must flag any hand/finger deformities or blurred text before client preview."
     }
-  ]
+  ],
+  "aliases": [
+    "apex",
+    "apex athletics"
+  ],
+  "slack_channel_ids": [],
+  "limits": {
+    "max_images_per_day": 40
+  },
+  "default_audience": "Athletes, fitness professionals and high performers aged 22-45",
+  "requires_product_photos": false
 }
